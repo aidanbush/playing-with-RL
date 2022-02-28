@@ -2,6 +2,7 @@ from abc import abstractmethod
 from typing import Any, Dict, Tuple
 
 import numpy as np
+import math
 
 class BaseEnvironment:
     @abstractmethod
@@ -40,7 +41,7 @@ class CliffWalk(BaseEnvironment):
     numActions = 4
     actionMapping = [(0,1),(1,0),(0,-1),(-1,0)]
 
-    def init(self):
+    def init(self, params):
         return
 
     def start(self):
@@ -116,6 +117,165 @@ class RandomWalk(BaseEnvironment):
 
     def agentParams(self):
         return {"numActions": self.numActions, "stateFormat": self.worldSize}
+
+class CartAndPoleEnvironment(BaseEnvironment):
+
+    numDims = 4
+    numActions = 2
+
+    state = None # cart pos(x), cart velocity(x dot), pole angle(theta), pole velocity(theta dot)
+    #stateRange = [(-4.8,4.8),(-math.inf,math.inf),(-0.418, 0.418),(-math.inf,math.inf)]
+    stateRange = [(-4.8,4.8),(-4.8,4.8),(-0.418, 0.418),(-0.418,0.418)]
+    initialState = [(-0.005,0.005),(-0.005,0.005),(-0.005,0.005),(-0.005,0.005)]
+    termState = [(-2.4, 2.4), None, (-.2095, .2095), None]
+
+    # pole and cart physics information
+    # https://coneural.org/florian/papers/05_cart_pole.pdf
+    # Neuronlike adaptive elements that can solve difficult learning control problems
+    gravity = 9.8 # m/s^2
+    cartMass = 1.0 # Kg
+    poleMass = 0.1 # Kg
+    poleHalfLength = 0.5 # m
+    pushForce = 10 # N
+
+    stepLength = 0.2 # s
+
+    totalMass = cartMass + poleMass
+
+    def init(self, params):
+        pass
+
+    def start(self):
+        self.state = np.zeros(4)
+
+        for i in range(self.numDims):
+            self.state[0] = np.random.uniform(self.initialState[i][0], self.initialState[i][1])
+
+        return self.state
+
+    # updates are calculated without force
+    def step(self, action):
+        trueAction = action * 2 - 1;
+
+        forceApplied = trueAction * self.pushForce
+
+        cosTheta = math.cos(self.state[2])
+        sinTheta = math.sin(self.state[2])
+
+        # calculate angle
+        angleAcc = (self.gravity * sinTheta + cosTheta * (
+                (-forceApplied - self.poleMass * self.state[3]**2 * sinTheta) / self.totalMass
+                )) / (self.poleHalfLength * (4/3 - self.poleMass * cosTheta**2 / self.totalMass))
+        xAcc = ((forceApplied + self.poleMass * self.poleHalfLength * (self.state[3]**2 - angleAcc * cosTheta))
+            / self.totalMass)
+
+        # update x then x velocity
+        self.state[0] += self.stepLength * self.state[1]
+        self.state[1] += self.stepLength * xAcc
+        # update theta then theta velocity
+        self.state[2] += self.stepLength * self.state[3]
+        self.state[3] += self.stepLength * angleAcc
+
+        self.boundStates()
+
+        done = self.endState()
+
+        reward = 1
+
+        return reward, self.state, done
+
+    def endState(self):
+        # check cart position
+        if self.state[0] < self.termState[0][0] or self.state[0] > self.termState[0][1]:
+            return True
+
+        # check pole angle
+        if self.state[2] < self.termState[2][0] or self.state[2] > self.termState[2][1]:
+            return True
+
+        return False
+
+    def agentParams(self):
+        return {"numActions": self.numActions, "stateFormat": self.stateRange}
+
+    def bound(self, val, bounds): # bounds = [lower, upper]
+        if val > bounds[1]:
+            return bounds[1]
+        if val < bounds[0]:
+            return bounds[0]
+        return val
+
+    def boundStates(self):
+        for i in range(len(self.state)):
+            self.state[i] = self.bound(self.state[i], self.stateRange[i])
+
+class AccessControlQueuing(BaseEnvironment):
+    # TODO introduce forced drop actions
+    possibleJobs = [1,2,4,8]
+    state = None # free server #, customer priority
+    numServers = 10
+    freeServers = None
+    currentQueue = None
+    completeChance = 0.06
+
+    stateRange = [(0,10),(1,8)]
+
+    # action 0 = drop job, action 1 = run job
+    numActions = 2
+
+    def init(self, params):
+        pass
+
+    def start(self):
+        self.state = np.zeros(2)
+
+        self.freeServers = self.numServers
+        self.currentQueue = self.genCustomer()
+
+        self.setState()
+
+        return self.state
+
+    def step(self, action):
+        # address action and calc reward
+        reward = None
+
+        # if no room drop
+        if self.freeServers <= 0 and action == 1:
+            action = 0
+
+        self.completeJobs()
+
+        # if no room or drop room
+        if action == 0:
+            reward = 0
+        else:
+            self.freeServers -= 1
+            reward = self.currentQueue
+
+        self.currentQueue = self.genCustomer()
+
+        self.setState()
+
+        return reward, self.state, False
+
+    def setState(self):
+        self.state[0] = self.freeServers
+        self.state[1] = self.currentQueue
+
+    def completeJobs(self):
+        completed = 0
+        for _ in range(self.numServers - self.freeServers):
+            if np.random.random() < self.completeChance:
+                completed += 1
+
+        self.freeServers += completed
+
+    def genCustomer(self):
+        return np.random.choice(self.possibleJobs)
+
+    def agentParams(self):
+        return {"numActions": self.numActions, "stateFormat": self.stateRange}
 
 class MountainCarEnvironment(BaseEnvironment):
     position = 0

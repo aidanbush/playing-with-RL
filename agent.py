@@ -19,6 +19,21 @@ class BaseAgent:
     def end(self, reward: float) -> None:
         raise NotImplementedError('Expected `end` to be implemented')
 
+class RandomAgent(BaseAgent):
+    numActions = None
+
+    def __init__(self, parameters):
+        self.numActions = parameters["numActions"]
+
+    def start(self, observation):
+        return np.random.randint(self.numActions)
+
+    def step(self, reward, observation):
+        return np.random.randint(self.numActions)
+
+    def end(self, reward):
+        pass
+
 class TabularSARSA(BaseAgent):
 
     # state = s[0] + s[1]*stateLen[0] ...
@@ -30,6 +45,8 @@ class TabularSARSA(BaseAgent):
     alpha = 0.1
     lastAction = None
     lastState = None
+    initialValue = 0
+    nullAction = -1
 
     def __init__(self, parameters):
         self.numActions = parameters["numActions"]
@@ -37,7 +54,6 @@ class TabularSARSA(BaseAgent):
         self.epsilon = parameters["epsilon"]
         self.alpha = parameters["alpha"]
         self.stateFormat = parameters["stateFormat"] # [x max, y max, z max ...] # assume min = 0
-        self.actions = [i for i in range(self.numActions)]
         
         numStates = 1
         # calculate the number of states
@@ -47,7 +63,7 @@ class TabularSARSA(BaseAgent):
             
 
         # initialize action-value array [state][action]
-        self.actionValues = [0 for j in range(numStates*self.numActions)]
+        self.actionValues = [self.initialValue for j in range(numStates*self.numActions)]
 
     def start(self, observation):
         # since tabular dont need to do anything to the observation
@@ -77,12 +93,11 @@ class TabularSARSA(BaseAgent):
 
     def end(self, reward):
         self.terminalUpdateActionValue(reward)
-        pass
 
     def selectAction(self, state):
         # e greedy
         if np.random.choice([0,1], p=[1 - self.epsilon, self.epsilon]) == 1:
-            return np.random.choice(self.actions)
+            return np.random.randint(self.numActions)
 
         # use Q to determine
         bestActions = [0]
@@ -95,7 +110,7 @@ class TabularSARSA(BaseAgent):
             elif value == bestValue:
                 bestActions.append(a)
 
-        return random.choice(bestActions)
+        return np.random.choice(bestActions)
 
     def updateActionValue(self, state, action, reward):
         lastIndex = self.QIndex(self.lastState, self.lastAction)
@@ -144,6 +159,38 @@ class TabularSARSA(BaseAgent):
                 print(end="],")
                 #print("{:8.2f}".format(stateAvg), end=",")
             print()
+
+    def greedyAction(self, state, iterations):
+        bestAction = []
+        actionValue = -math.inf
+
+        for action in range(numActions):
+            avgVal = sampleStateAction(state, action, iterations)
+            if avgVal == self.initialValue:
+                continue
+            if avgVal == actionValue:
+                bestAction.append(action)
+            if avgVal > actionValue:
+                bestAction = [action]
+
+        return np.random.choice(bestAction)
+
+    def sampleStateAction(self, state, action, iterations):
+        # check if any of the states are set to None
+        if not None in state:
+            return self.Q(state, action)
+
+        val = 0
+
+        for _ in range(interations):
+            s = state.copy()
+            for i in range(s):
+                if s[i] == None:
+                    #gen value
+                    s[i] = np.random.randint(self.stateFormat[i]+1)
+                val += self.Q(s, action)
+
+        return val / iterations
 
 class NStepSARSA(TabularSARSA):
 
@@ -262,6 +309,10 @@ class ExpectedSARSA(TabularSARSA):
         self.actionValues[lastIndex] += self.alpha * \
                 (reward + self.gamma * expectedQ - self.Q(self.lastState, self.lastAction))
 
+    def terminalUpdateActionValue(self, reward):
+        raise NotImplementedError('Expected `terminalUpdateActionValue` to be implemented')
+
+
     def expectedActionValue(self, state):
         maxActions = [0]
         maxValue = self.Q(state, 0)
@@ -310,6 +361,181 @@ class QLearning(TabularSARSA):
                 maxValue = value
 
         return maxValue
+
+class DifferentialSemiGradientSARSA(BaseAgent):
+    numActions = None
+    stateRanges = None
+
+    tc = None
+
+    alpha = None
+    beta = None
+    epsilon = None
+
+    averageR = None # R bar
+    weights = None
+
+    lastAction = None
+    lastState = None
+
+    initialValue = 0
+    nullAction = -1
+
+    def __init__(self, parameters):
+        self.numActions = parameters["numActions"]
+        self.stateRanges = parameters["stateFormat"]
+
+        tilecoderStateRanges = [[s[0] for s in self.stateRanges], [s[1] for s in self.stateRanges]]
+
+        tilings = parameters["tilings"]
+        numTiles = parameters["numTiles"]
+
+        self.tc = representation.TileCoding(
+                    input_indices = [np.arange(len(self.stateRanges))],
+                    ntiles = [numTiles],
+                    ntilings = [tilings],
+                    hashing = None,
+                    state_range = tilecoderStateRanges,
+                    rnd_stream = np.random.RandomState(),
+                    bias_term=False)
+
+        self.alpha = parameters["alpha"] / tilings
+        self.beta = parameters["beta"]
+        self.epsilon = parameters["epsilon"]
+
+        self.averageR = 0
+        self.weights = [np.zeros(self.tc.size) for _ in range(self.numActions)]
+
+    def getFeatures(self, observation):
+        state = np.zeros(self.tc.size)
+        indices = self.tc(observation)
+
+        for i in indices:
+            state[i] = 1
+
+        return state
+
+    def Q(self, state, action):
+        return state.dot(self.weights[action])
+
+    def gradQ(self, state, action):
+        # tilecoding gradient is S
+        return state
+
+    def selectAction(self, state):
+        # e greedy
+        if np.random.random() < self.epsilon:
+            return np.random.randint(self.numActions)
+
+        # best Q value
+        bestActions = [0]
+        bestValue = self.Q(state, bestActions[0])
+        for a in range(1, self.numActions):
+            value = self.Q(state, a)
+            if value > bestValue:
+                bestActions = [a]
+                bestValue = value
+            elif value == bestValue:
+                bestActions.append(a)
+
+        return np.random.choice(bestActions)
+
+    def updateWeights(self, reward, state, action):
+        # delta = R - Rbar + qhat(S',A',w) - qhat(S,A,w)
+        delta = reward - self.averageR + self.Q(state, action) - self.Q(self.lastState, self.lastAction)
+
+        # Rbar = Rbar + beta * delta
+        self.averageR += self.beta * delta
+
+        # w = w + alpha * delta gradient(qhat(S,A,w))
+        self.weights[self.lastAction] += self.alpha * delta * self.gradQ(self.lastState, self.lastAction)
+
+    def terminalUpdateWeights(self, reward):
+        # because terminal: qhat(S',A',w) = 0
+        delta = reward - self.averageR - self.Q(self.lastState, self.lastAction)
+
+        # Rbar = Rbar + beta * delta
+        self.averageR += self.beta * delta
+
+        # w = w + alpha * delta gradient(qhat(S,A,w))
+        self.weights[self.lastAction] += self.alpha * self.gradQ(self.lastState, self.lastAction)
+
+    def start(self, observation):
+        # TODO do I set averageR = 0 here? ask around
+        self.averageR = 0
+
+        state = self.getFeatures(observation)
+
+        action = self.selectAction(state)
+
+        self.lastState = state
+        self.lastAction = action
+
+        return action
+
+    def step(self, reward, observation):
+        state = self.getFeatures(observation)
+
+        # select action
+        action = self.selectAction(state)
+
+        # update
+        self.updateWeights(reward, state, action)
+
+        self.lastState = state
+        self.lastAction = action
+
+        return action
+
+    def end(self, reward):
+        self.terminalUpdateWeights(reward)
+
+    def printWeights(self):
+        print("weights")
+        for a in range(len(self.weights)):
+            print("action", a)
+            for w in self.weights[a]:
+                print(w, end=",")
+            print()
+
+    def greedyAction(self, state, iterations):
+        bestAction = []
+        actionValue = -math.inf
+
+        for action in range(self.numActions):
+            avgVal = self.sampleStateAction(state, action, iterations)
+            if avgVal == self.initialValue:
+                continue
+            if avgVal == actionValue:
+                bestAction.append(action)
+            if avgVal > actionValue:
+                bestAction = [action]
+
+        if len(bestAction) == 0:
+            return self.nullAction
+
+        return np.random.choice(bestAction)
+
+    def sampleStateAction(self, state, action, iterations):
+        # check if any of the states are set to None
+        if not None in state:
+            s = self.getFeatures(np.array(state))
+            return self.Q(s, action)
+
+        val = 0
+
+        for _ in range(iterations):
+            s = np.array(state.copy())
+            for i in range(len(s)):
+                if s[i] == None:
+                    #gen value
+                    minR = self.stateRanges[i][0]
+                    s[i] = minR + np.random.random()*(self.stateRanges[i][1]-minR)
+
+            s = self.getFeatures(s)
+            val += self.Q(s, action)
+
+        return val / iterations
 
 # -1 reverse
 # 0 = neutral
@@ -428,7 +654,7 @@ class EpisodicSemiGradSARSA(BaseAgent):
             elif value == bestValue:
                 bestActions.append(i)
 
-        return random.choice(bestActions)
+        return np.random.choice(bestActions)
 
     def terminalUpdateWeights(self, reward):
         self.weights[self.lastAction + 1] = self.weights[self.lastAction + 1] \
