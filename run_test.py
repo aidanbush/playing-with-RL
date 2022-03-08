@@ -9,6 +9,7 @@ import code
 
 import matplotlib.pyplot as plt
 import matplotlib.style as style
+from matplotlib.lines import Line2D
 
 MAX_STEPS = 10000
 # types
@@ -48,7 +49,7 @@ def runTest(numRuns, numEpisodes, agent, env, parameters, testParams, report=Fal
 
 def runAgent(numEpisodes, agentClass, envClass, parameters, testParams={"maxSteps":MAX_STEPS}, report=False):
     # seed np
-    np.random.seed(int(time.time()))
+    np.random.seed(int(time.time() % 10000 * 1000))
 
     # create env
     env = envClass()
@@ -72,7 +73,7 @@ def runAgent(numEpisodes, agentClass, envClass, parameters, testParams={"maxStep
         returns.append(glue.total_reward)
     #agent.printValues() # for testing value and action value values
     #agent.printWeights()
-    #plotActions(agent, env, 21)
+    #plotActions(agent, env, 40)
 
 
     return steps, returns
@@ -81,8 +82,12 @@ def plotActions(agent, environment, resolution):
     stateRanges = environment.agentParams()["stateFormat"]
     numStates = len(stateRanges)
     numActions = environment.agentParams()["numActions"]
-    actionColours = plt.cm.get_cmap("hsv", numActions)
+
+    actionColours = plt.cm.get_cmap("hsv", numActions+1)
     nonActionColour = (0.0, 0.0, 0.0, 1.0)
+
+    print(stateRanges)
+
     # assume stateRange >= 2
     if numStates < 2:
         # plot line
@@ -97,20 +102,21 @@ def plotActions(agent, environment, resolution):
         print("s1",s1)
         for s2 in range(numStates):
             print("s2",s2)
+            s1Min = stateRanges[s1][0]
+            s1Max = stateRanges[s1][1]
+            s2Min = stateRanges[s2][0]
+            s2Max = stateRanges[s2][1]
+
             imshowList = np.zeros((resolution+1, resolution+1, 4))
             # loop through values
             for i in range(resolution+1):
+                if s1 == s2:
+                    break
                 for j in range(resolution+1):
-                    # if i == j only loop through j
                     state = [None for _ in range(numStates)]
 
-                    s1Min = stateRanges[s1][0]
-                    s1Max = stateRanges[s1][1]
-                    s2Min = stateRanges[s2][0]
-                    s2Max = stateRanges[s2][1]
-
                     s1Val = s1Min + (i/resolution)*(s1Max-s1Min)
-                    s2Val = s2Min + (j/resolution)*(s1Max-s1Min)
+                    s2Val = s2Min + (j/resolution)*(s2Max-s2Min)
 
                     state[s1] = s1Val
                     state[s2] = s2Val
@@ -120,14 +126,72 @@ def plotActions(agent, environment, resolution):
 
                     if action != agent.nullAction:# unupdated
                         colour = actionColours(action)
+
+                    # copy colour
                     for imI in range(4):
                         imshowList[i][j][imI] = colour[imI]
-            ax[s1,s2].imshow(imshowList)
-    #
-    #ax[0][0].legend()
+                    #print("[{:.2f},{:.2f}]".format(state[0],state[1]), end=",")
+            #print()
+            ax[s1][s2].imshow(imshowList)
+            ax[s1][s2].xaxis.tick_top()
+            ax[s1][s2].xaxis.set_label_position('top')
+
+            ax[s1][s2].set_xlabel(s1)
+            ax[s1][s2].set_ylabel(s2)
+
+    lines = [Line2D([0], [0], color=colour, lw=4) for colour in [nonActionColour]+[actionColours(i) for i in range(numActions)]]
+    ax[0][0].legend(lines, ["none"] + list(range(numActions)))
     plt.show()
 
-def main():
+def plotData(data, labels):
+    # plot steps
+    for i in range(len(data)):
+        label = labels[i]
+        plt.plot(data[i][0], label=label)
+        plt.fill_between(np.arange(len(data[i][0])), data[i][0]-data[i][1], data[i][0]+data[i][1], alpha=0.5)
+
+    plt.title("steps")
+    plt.legend(loc='upper right', prop={'size': 15})
+    plt.show()
+
+    # plot returns
+    for i in range(len(data)):
+        label = labels[i]
+        plt.plot(data[i][2], label=label)
+        plt.fill_between(np.arange(len(data[i][2])), data[i][2]-data[i][3], data[i][2]+data[i][3], alpha=0.5)
+
+    plt.title("return")
+    plt.legend(loc='upper right', prop={'size': 15})
+    plt.show()
+    return
+
+def parameterSweep(numRuns, numEpisodes, agent, env, params, testParams):
+    # only parameters at a time
+    sweepParam = None
+    for key in params.keys():
+        if isinstance(params[key], list):
+            if sweepParam != None:
+                print("only test one param at a time")
+                return
+            sweepParam = key
+
+    sweepVals = params[sweepParam]
+    data = []
+    labels = []
+    
+    for pVal in sweepVals:
+        labels.append(agent.__name__ + " " + sweepParam + " " + str(pVal))
+        sweepParams = params.copy()
+        sweepParams[sweepParam] = pVal
+        print("running sweep", pVal, len(labels), "/", len(sweepVals))
+        data.append(runTest(numRuns, numEpisodes, agent, env, sweepParams, testParams, report=False))
+
+    # plot
+    plotData(data, labels)
+
+    # params plots
+
+def basicTest():
     # numRuns = 30
     # numEpisodes = 250
     # agent = a.TabularSARSA
@@ -139,37 +203,53 @@ def main():
     # parameters = {"gamma": 1, "alpha": 0.1, "epsilon": 0.1, "n_steps": 5}
     # testParams = {"algType": EPISODIC, "maxSteps":MAX_STEPS}
 
-    # numRuns = 10
-    # numEpisodes = 250
-    agents = [a.DifferentialSemiGradientSARSA, a.RandomAgent]
-    # env = e.CartAndPoleEnvironment
-    # parameters = {"alpha": 0.1, "beta":0.05, "epsilon": 0.1, "tilings":10, "numTiles":20}
-    numRuns = 5
-    numEpisodes = 2
+    #numRuns = 50
+    #numEpisodes = 100
+    #agents = [a.DifferentialSemiGradientSARSA, a.DifferentialSemiGradientSARSA, a.RandomAgent]
+    #env = e.CartAndPoleEnvironment
+    #parameters = [{"alpha": 0.1, "beta":0.05, "epsilon": 0.1, "tilings":10, "numTiles":20, "resetR":True},{"alpha": 0.1, "beta":0.05, "epsilon": 0.1, "tilings":10, "numTiles":20, "resetR":False},{}]
+    #testParams = {"algType": CONTINUOUS, "maxSteps":2000}
+
+    numRuns = 10
+    numEpisodes = 50#75
+    #agents = [a.DifferentialSemiGradientSARSA, a.RandomAgent]
+    agents = [a.DifferentialSemiGradientSARSA, a.RandomAgent, a.SpecificAction, a.SpecificAction, a.AccessControlSol]
     env = e.AccessControlQueuing
-    parameters = {"alpha": 0.1, "beta":0.2, "epsilon": 0.1, "tilings":2, "numTiles":11}
-    testParams = {"algType": CONTINUOUS, "maxSteps":2000}
+    #parameters = [{"alpha": 0.001, "beta":0.001, "epsilon": 0.005, "tilings":2, "numTiles":21, "resetR":True}, {}, {"action":1}, {"action":0}, {}]
+    parameters = [{"alpha": 0.01, "beta":0.01, "epsilon": 0.1, "tilings":2, "numTiles":21, "resetR":False}, {}, {"action":1}, {"action":0}, {}]
+    testParams = {"algType": CONTINUOUS, "maxSteps":1250}
 
     data = []
-    for agent in agents:
-        data.append(runTest(numRuns, numEpisodes, agent, env, parameters, testParams, report=True))
+    labels = []
 
-    # plot steps
     for i in range(len(agents)):
-        plt.plot(data[i][0], label=agents[i].__name__)
-        plt.fill_between(np.arange(len(data[i][0])), data[i][0]-data[i][1], data[i][0]+data[i][1], alpha=0.5)
+        labels.append(agents[i].__name__ + " " + str(i))
+        agent = agents[i]
+        params = parameters
+        if isinstance(parameters, list):
+            params = parameters[i]
+        data.append(runTest(numRuns, numEpisodes, agent, env, params, testParams, report=True))
 
-    plt.title("steps")
-    plt.legend(loc='upper right', prop={'size': 15})
-    plt.show()
+    plotData(data, labels)
 
-    # plot returns
-    for i in range(len(agents)):
-        plt.plot(data[i][2], label=agents[i].__name__)
-        plt.fill_between(np.arange(len(data[i][2])), data[i][2]-data[i][3], data[i][2]+data[i][3], alpha=0.5)
+def sweepTest():
+    numRuns = 200
+    numEpisodes = 75
+    agent = a.DifferentialSemiGradientSARSA
+    env = e.AccessControlQueuing
+    #parameters = {"alpha": 0.01, "beta":0.01, "epsilon": 0.1, "tilings":2, "numTiles":21, "resetR":[True,False]} # True
+    #parameters = {"alpha": 0.01, "beta":[0.2,0.1,0.05,0.025,0.01,0.005,0.001], "epsilon": 0.1, "tilings":2, "numTiles":21, "resetR":True} # 0.01 seems good - no clear leader
+    #parameters = {"alpha": [0.2,0.1,0.05,0.01,0.005,0.001], "beta":0.01, "epsilon": 0.1, "tilings":2, "numTiles":21, "resetR":True} # 0.001 seems best
+    #parameters = {"alpha": [0.1,0.01,0.005,0.001,0.0005,0.0001,0.00001], "beta":0.001, "epsilon": 0.1, "tilings":2, "numTiles":21, "resetR":True} # 0.001 - hard to tell
+    parameters = {"alpha": 0.001, "beta":0.001, "epsilon": [0.1,0.05,0.01,0.005,0.001,0.0005,0.0001], "tilings":2, "numTiles":21, "resetR":True} # 0.005
+    testParams = {"algType": CONTINUOUS, "maxSteps":100}
 
-    plt.title("return")
-    plt.legend(loc='upper right', prop={'size': 15})
-    plt.show()
+    parameterSweep(numRuns, numEpisodes, agent, env, parameters, testParams)
+
+def main():
+    basicTest()
+    #sweepTest()
+    return
+
 
 main()

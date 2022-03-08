@@ -34,6 +34,52 @@ class RandomAgent(BaseAgent):
     def end(self, reward):
         pass
 
+class AccessControlSol(BaseAgent):
+    nullAction = -1
+
+    def __init__(self, parameters):
+        pass
+
+    def start(self, observation):
+        return self.selectAction(observation)
+
+    def step(self, reward, observation):
+        return self.selectAction(observation)
+
+    def greedyAction(self, observation, itterations):
+        return self.selectAction(observation)
+
+    def selectAction(self, observation):
+        freeServers = observation[0]
+        priority = observation[1]
+
+        if priority <= 1 and freeServers <= 5:
+            return 0
+        if priority <= 2 and freeServers <= 3:
+            return 0
+        if priority <= 4 and freeServers <= 1:
+            return 0
+
+        return 1
+
+    def end(self, reward):
+        pass
+
+class SpecificAction(BaseAgent):
+    action = None
+
+    def __init__(self, parameters):
+        self.action = parameters["action"]
+
+    def start(self, observation):
+        return self.action
+
+    def step(self, reward, observation):
+        return self.action
+
+    def end(self, reward):
+        pass
+
 class TabularSARSA(BaseAgent):
 
     # state = s[0] + s[1]*stateLen[0] ...
@@ -78,7 +124,9 @@ class TabularSARSA(BaseAgent):
         # return action
         return action
 
-    def step(self, reward, observation):
+    def step(self, reward, observation, forcedAction):
+        if forcedAction != None:
+            self.lastAction = forcedAction
         # select action
         action = self.selectAction(observation)
 
@@ -91,7 +139,9 @@ class TabularSARSA(BaseAgent):
 
         return action
 
-    def end(self, reward):
+    def end(self, reward, forcedAction):
+        if forcedAction != None:
+            self.lastAction = forcedAction
         self.terminalUpdateActionValue(reward)
 
     def selectAction(self, state):
@@ -367,6 +417,7 @@ class DifferentialSemiGradientSARSA(BaseAgent):
     stateRanges = None
 
     tc = None
+    nTiles = None
 
     alpha = None
     beta = None
@@ -389,6 +440,7 @@ class DifferentialSemiGradientSARSA(BaseAgent):
 
         tilings = parameters["tilings"]
         numTiles = parameters["numTiles"]
+        self.nTiles = numTiles
 
         self.tc = representation.TileCoding(
                     input_indices = [np.arange(len(self.stateRanges))],
@@ -406,6 +458,9 @@ class DifferentialSemiGradientSARSA(BaseAgent):
         self.averageR = 0
         self.weights = [np.zeros(self.tc.size) for _ in range(self.numActions)]
 
+        # TODO remove
+        self.resetR = parameters["resetR"]
+
     def getFeatures(self, observation):
         state = np.zeros(self.tc.size)
         indices = self.tc(observation)
@@ -419,10 +474,20 @@ class DifferentialSemiGradientSARSA(BaseAgent):
         return state.dot(self.weights[action])
 
     def gradQ(self, state, action):
-        # tilecoding gradient is S
+        # tilecoding gradient is the features
         return state
 
-    def selectAction(self, state):
+    def forceAction(self, observation):
+        # TODO use env
+        if observation[0] == 0:
+            return 0
+        return None
+
+    def selectAction(self, state, observation):
+        forcedAction = self.forceAction(observation)
+        if forcedAction != None:
+            return forcedAction
+
         # e greedy
         if np.random.random() < self.epsilon:
             return np.random.randint(self.numActions)
@@ -443,6 +508,7 @@ class DifferentialSemiGradientSARSA(BaseAgent):
     def updateWeights(self, reward, state, action):
         # delta = R - Rbar + qhat(S',A',w) - qhat(S,A,w)
         delta = reward - self.averageR + self.Q(state, action) - self.Q(self.lastState, self.lastAction)
+        #print(np.array_equal(self.lastState, state), self.lastAction)
 
         # Rbar = Rbar + beta * delta
         self.averageR += self.beta * delta
@@ -458,15 +524,19 @@ class DifferentialSemiGradientSARSA(BaseAgent):
         self.averageR += self.beta * delta
 
         # w = w + alpha * delta gradient(qhat(S,A,w))
-        self.weights[self.lastAction] += self.alpha * self.gradQ(self.lastState, self.lastAction)
+        self.weights[self.lastAction] += self.alpha * delta * self.gradQ(self.lastState, self.lastAction)
 
     def start(self, observation):
+        #print("averageR", self.averageR)
+
         # TODO do I set averageR = 0 here? ask around
-        self.averageR = 0
+        print("averageR", self.averageR)
+        if self.resetR:
+            self.averageR = 0
 
         state = self.getFeatures(observation)
 
-        action = self.selectAction(state)
+        action = self.selectAction(state, observation)
 
         self.lastState = state
         self.lastAction = action
@@ -477,7 +547,7 @@ class DifferentialSemiGradientSARSA(BaseAgent):
         state = self.getFeatures(observation)
 
         # select action
-        action = self.selectAction(state)
+        action = self.selectAction(state, observation)
 
         # update
         self.updateWeights(reward, state, action)
@@ -492,10 +562,15 @@ class DifferentialSemiGradientSARSA(BaseAgent):
 
     def printWeights(self):
         print("weights")
+        tilingSize = self.nTiles**len(self.stateRanges)
+        print(tilingSize)
         for a in range(len(self.weights)):
             print("action", a)
-            for w in self.weights[a]:
-                print(w, end=",")
+            for i in range(len(self.weights[a])):
+                if i % tilingSize == 0:
+                    print()
+                w = self.weights[a][i]
+                print("{:.3f}".format(w), end=",")
             print()
 
     def greedyAction(self, state, iterations):

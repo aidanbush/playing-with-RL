@@ -14,7 +14,7 @@ class BaseEnvironment:
         raise NotImplementedError('Expected `start` to be implemented')
 
     @abstractmethod
-    def step(self, action: int) -> Tuple[float, Any, bool]:
+    def step(self, action: int) -> Tuple[float, Any, bool, int]: # last is forced action None if
         raise NotImplementedError('Expected `step` to be implemented')
 
 class CliffWalk(BaseEnvironment):
@@ -234,28 +234,37 @@ class AccessControlQueuing(BaseEnvironment):
 
         self.setState()
 
+        #print("curQueue", self.currentQueue, "state", self.state)
+
         return self.state
 
     def step(self, action):
         # address action and calc reward
         reward = None
 
-        # if no room drop
-        if self.freeServers <= 0 and action == 1:
-            action = 0
-
         self.completeJobs()
 
         # if no room or drop room
+        if self.freeServers <= 0 and action == 1:
+            action = 0
+            #TODO this is an error
+
         if action == 0:
             reward = 0
         else:
             self.freeServers -= 1
             reward = self.currentQueue
+        if self.freeServers < 0:
+            print(self.freeServers)
 
         self.currentQueue = self.genCustomer()
 
+        # loop until there is room in the queue
+        #self.waitForRoom()
+
         self.setState()
+
+        #print("action", action, "reward", reward, "curQueue", self.currentQueue, "state", self.state)
 
         return reward, self.state, False
 
@@ -270,6 +279,10 @@ class AccessControlQueuing(BaseEnvironment):
                 completed += 1
 
         self.freeServers += completed
+
+    def waitForRoom(self):
+        while self.freeServers <= 0:
+            self.completeJobs()
 
     def genCustomer(self):
         return np.random.choice(self.possibleJobs)
