@@ -458,7 +458,6 @@ class DifferentialSemiGradientSARSA(BaseAgent):
         self.averageR = 0
         self.weights = [np.zeros(self.tc.size) for _ in range(self.numActions)]
 
-        # TODO remove
         self.resetR = parameters["resetR"]
 
     def getFeatures(self, observation):
@@ -585,6 +584,7 @@ class DifferentialSemiGradientSARSA(BaseAgent):
                 bestAction.append(action)
             if avgVal > actionValue:
                 bestAction = [action]
+                actionValue = avgVal
 
         if len(bestAction) == 0:
             return self.nullAction

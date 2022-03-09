@@ -254,8 +254,6 @@ class AccessControlQueuing(BaseEnvironment):
         else:
             self.freeServers -= 1
             reward = self.currentQueue
-        if self.freeServers < 0:
-            print(self.freeServers)
 
         self.currentQueue = self.genCustomer()
 

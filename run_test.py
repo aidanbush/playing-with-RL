@@ -203,21 +203,20 @@ def basicTest():
     # parameters = {"gamma": 1, "alpha": 0.1, "epsilon": 0.1, "n_steps": 5}
     # testParams = {"algType": EPISODIC, "maxSteps":MAX_STEPS}
 
-    #numRuns = 50
-    #numEpisodes = 100
-    #agents = [a.DifferentialSemiGradientSARSA, a.DifferentialSemiGradientSARSA, a.RandomAgent]
-    #env = e.CartAndPoleEnvironment
-    #parameters = [{"alpha": 0.1, "beta":0.05, "epsilon": 0.1, "tilings":10, "numTiles":20, "resetR":True},{"alpha": 0.1, "beta":0.05, "epsilon": 0.1, "tilings":10, "numTiles":20, "resetR":False},{}]
-    #testParams = {"algType": CONTINUOUS, "maxSteps":2000}
+    numRuns = 5
+    numEpisodes = 100
+    agents = [a.DifferentialSemiGradientSARSA, a.RandomAgent]
+    env = e.CartAndPoleEnvironment
+    parameters = [{"alpha": 0.1, "beta":0.1, "epsilon": 0.1, "tilings":10, "numTiles":20, "resetR":True}, {}]
+    testParams = {"algType": CONTINUOUS, "maxSteps":1000}
 
-    numRuns = 10
-    numEpisodes = 50#75
+    #numRuns = 2
+    #numEpisodes = 3#75
     #agents = [a.DifferentialSemiGradientSARSA, a.RandomAgent]
-    agents = [a.DifferentialSemiGradientSARSA, a.RandomAgent, a.SpecificAction, a.SpecificAction, a.AccessControlSol]
-    env = e.AccessControlQueuing
-    #parameters = [{"alpha": 0.001, "beta":0.001, "epsilon": 0.005, "tilings":2, "numTiles":21, "resetR":True}, {}, {"action":1}, {"action":0}, {}]
-    parameters = [{"alpha": 0.01, "beta":0.01, "epsilon": 0.1, "tilings":2, "numTiles":21, "resetR":False}, {}, {"action":1}, {"action":0}, {}]
-    testParams = {"algType": CONTINUOUS, "maxSteps":1250}
+    #agents = [a.DifferentialSemiGradientSARSA, a.RandomAgent, a.SpecificAction, a.SpecificAction, a.AccessControlSol]
+    #env = e.AccessControlQueuing
+    #parameters = [{"alpha": 0.01, "beta":0.01, "epsilon": 0.1, "tilings":2, "numTiles":21, "resetR":False}, {}, {"action":1}, {"action":0}, {}]
+    #testParams = {"algType": CONTINUOUS, "maxSteps":1000000}
 
     data = []
     labels = []
