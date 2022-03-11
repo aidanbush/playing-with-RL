@@ -214,14 +214,18 @@ class TabularSARSA(BaseAgent):
         bestAction = []
         actionValue = -math.inf
 
-        for action in range(numActions):
-            avgVal = sampleStateAction(state, action, iterations)
+        for action in range(self.numActions):
+            avgVal = self.sampleStateAction(state, action, iterations)
             if avgVal == self.initialValue:
                 continue
             if avgVal == actionValue:
                 bestAction.append(action)
             if avgVal > actionValue:
                 bestAction = [action]
+                actionValue = avgVal
+
+        if len(bestAction) == 0:
+            return self.nullAction
 
         return np.random.choice(bestAction)
 
@@ -612,15 +616,31 @@ class DifferentialSemiGradientSARSA(BaseAgent):
 
         return val / iterations
 
-# -1 reverse
-# 0 = neutral
-# 1 = forward
-# weights and alpha not correct
 class EpisodicSemiGradSARSA(BaseAgent):
+    numActions = None
+    stateRanges = None
+
+    tc = None
+    nTiles = None
+
+    alpha = None
+    gamma = None
+    epsilon = None
+
+    weights = None
+
+    lastAction = None
+    lastState = None
+
+    initialValue = 0
+    nullAction = -1
 
     def __init__(self, parameters, RBF=False):
-        self.gamma = 1
-        self.epsilon = 0.1
+        self.numActions = parameters["numActions"]
+        self.stateRanges = parameters["stateFormat"]
+
+        self.gamma = parameters["gamma"]
+        self.epsilon = parameters["epsilon"]
         self.RBF = RBF
 
         if RBF:
@@ -645,24 +665,25 @@ class EpisodicSemiGradSARSA(BaseAgent):
             self.weights = [np.zeros(self.rbf.size) for i in range(3)]
             self.alpha = parameters["RBFAlpha"] #0.1 / (12) # not sure if correct may want to find expected value
         else:
-            if "Tilings" not in parameters:
-                print("no tilings!")
-                parameters["Tilings"] = 8
-            if "TileAlpha" not in parameters:
-                print("no alpha!")
-                parameters["TileAlpha"] = 0.1 / parameters["Tilings"] # alpha = 0.1 / E[xTx]
+            tilings = parameters["tilings"]
+            numTiles = parameters["numTiles"]
+            self.nTiles = numTiles
+
             state_range = [[-1.2, -0.07], [0.5, 0.07]]
+            tilecoderStateRanges = [[s[0] for s in self.stateRanges], [s[1] for s in self.stateRanges]]
+
             self.tc = representation.TileCoding(
-                    input_indices = [np.arange(2)],
-                    ntiles = [8],
-                    ntilings = [parameters["Tilings"]],
+                    input_indices = [np.arange(len(self.stateRanges))],
+                    ntiles = [numTiles],
+                    ntilings = [tilings],
                     hashing = None,
-                    state_range = state_range,
+                    state_range = tilecoderStateRanges,
                     rnd_stream = np.random.RandomState(),
                     bias_term=False)
-            self.weights = [np.zeros(self.tc.size) for i in range(3)]
 
-            self.alpha = parameters["TileAlpha"]
+            self.weights = [np.zeros(self.tc.size) for i in range(self.numActions)]
+
+            self.alpha = parameters["alpha"] / tilings
 
     def start(self, observation):
         # tilecode
@@ -681,7 +702,7 @@ class EpisodicSemiGradSARSA(BaseAgent):
 
         # select action
         action = self.selectAction(state)
-        #print(self.q(state, action))
+        #print(self.Q(state, action))
 
         # update
         self.updateWeights(reward, state, action)
@@ -699,10 +720,16 @@ class EpisodicSemiGradSARSA(BaseAgent):
 
     def getFeatures(self, observation):
         if self.RBF:
+            normalizedObs = []#np.zeros(len(self.stateRanges))
+            for i in range(len(self.stateRanges)):
+                sMin = self.stateRanges[0]
+                sMax = self.stateRanges[1]
+                normalizedObs.append((observation[i] - sMin) / (sMax - sMin))
             # normalize between 0 and 1
-            pos = (observation[0] + 1.2) / (0.5 + 1.2)
-            vel = (observation[1] + 0.07) / (0.07 + 0.07)
-            state = self.rbf(np.array([[pos, vel]]))
+            #pos = (observation[0] + 1.2) / (0.5 + 1.2)
+            #vel = (observation[1] + 0.07) / (0.07 + 0.07)
+            #state = self.rbf(np.array([[pos, vel]]))
+            state = self.rbf(np.array([normalizedObs]))
         else:
             indices = self.tc(observation)
             state = np.zeros(self.tc.size)
@@ -710,44 +737,82 @@ class EpisodicSemiGradSARSA(BaseAgent):
             for i in indices:
                 state[i] = 1
 
-        #print(state)
         return state
 
     def selectAction(self, state):
         # e greedy
-        if np.random.choice([0, 1], p=[1 - self.epsilon, self.epsilon]) == 1:
-            return np.random.choice([0,1])
+        if np.random.random() < self.epsilon:
+            return np.random.randint(self.numActions)
 
         # best q value
-        bestValue = self.q(state, -1)
-        bestActions = [-1]
-        for i in range(0, 2):
-            value = self.q(state,i)
+        bestActions = [0]
+        bestValue = self.Q(state, bestActions[0])
+        for a in range(1, self.numActions):
+            value = self.Q(state,a)
             if value > bestValue:
                 bestValue = value
-                bestActions = [i]
+                bestActions = [a]
             elif value == bestValue:
-                bestActions.append(i)
+                bestActions.append(a)
 
         return np.random.choice(bestActions)
 
     def terminalUpdateWeights(self, reward):
-        self.weights[self.lastAction + 1] = self.weights[self.lastAction + 1] \
-            + self.alpha * (reward - self.q(self.lastState, self.lastAction)) \
+        self.weights[self.lastAction] = self.weights[self.lastAction] \
+            + self.alpha * (reward - self.Q(self.lastState, self.lastAction)) \
                 * self.gradientQ(self.lastState, self.lastAction)
 
     def updateWeights(self, reward, state, action):
         #code.interact(local=locals())
-        self.weights[self.lastAction + 1] = self.weights[self.lastAction + 1] \
-            + self.alpha * (reward + self.gamma * self.q(state, action) \
-                    - self.q(self.lastState, self.lastAction)) \
+        # w = w + \alpha (R + \gamma * q_hat(S',A',w) - q_hat(S,A,w)) * gradient(q_hat(S,A,w))
+        self.weights[self.lastAction] += \
+            + self.alpha * (reward + self.gamma * self.Q(state, action) \
+                    - self.Q(self.lastState, self.lastAction)) \
                 * self.gradientQ(self.lastState, self.lastAction)
 
-    def q(self, state, action):
-        if action not in [-1, 0, 1]:
-            raise Exception('Action does not exist')
-        return state.dot(self.weights[action + 1])
+    def Q(self, state, action):
+        return state.dot(self.weights[action])
 
     def gradientQ(self, state, action):
         # same for RBF and tilecoding gradient
         return state
+
+    def greedyAction(self, state, iterations):
+        bestAction = []
+        actionValue = -math.inf
+
+        for action in range(self.numActions):
+            avgVal = self.sampleStateAction(state, action, iterations)
+            if avgVal == self.initialValue:
+                continue
+            if avgVal == actionValue:
+                bestAction.append(action)
+            if avgVal > actionValue:
+                bestAction = [action]
+                actionValue = avgVal
+
+        if len(bestAction) == 0:
+            return self.nullAction
+
+        return np.random.choice(bestAction)
+
+    def sampleStateAction(self, state, action, iterations):
+        # check if any of the states are set to None
+        if not None in state:
+            s = self.getFeatures(np.array(state))
+            return self.Q(s, action)
+
+        val = 0
+
+        for _ in range(iterations):
+            s = np.array(state.copy())
+            for i in range(len(s)):
+                if s[i] == None:
+                    #gen value
+                    minR = self.stateRanges[i][0]
+                    s[i] = minR + np.random.random()*(self.stateRanges[i][1]-minR)
+
+            s = self.getFeatures(s)
+            val += self.Q(s, action)
+
+        return val / iterations

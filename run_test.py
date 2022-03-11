@@ -203,12 +203,12 @@ def basicTest():
     # parameters = {"gamma": 1, "alpha": 0.1, "epsilon": 0.1, "n_steps": 5}
     # testParams = {"algType": EPISODIC, "maxSteps":MAX_STEPS}
 
-    numRuns = 5
-    numEpisodes = 100
-    agents = [a.DifferentialSemiGradientSARSA, a.RandomAgent]
-    env = e.CartAndPoleEnvironment
-    parameters = [{"alpha": 0.1, "beta":0.1, "epsilon": 0.1, "tilings":10, "numTiles":20, "resetR":True}, {}]
-    testParams = {"algType": CONTINUOUS, "maxSteps":1000}
+    #numRuns = 5
+    #numEpisodes = 100
+    #agents = [a.DifferentialSemiGradientSARSA, a.RandomAgent]
+    #env = e.CartAndPoleEnvironment
+    #parameters = [{"alpha": 0.1, "beta":0.1, "epsilon": 0.1, "tilings":10, "numTiles":20, "resetR":True}, {}]
+    #testParams = {"algType": CONTINUOUS, "maxSteps":1000}
 
     #numRuns = 2
     #numEpisodes = 3#75
@@ -217,6 +217,15 @@ def basicTest():
     #env = e.AccessControlQueuing
     #parameters = [{"alpha": 0.01, "beta":0.01, "epsilon": 0.1, "tilings":2, "numTiles":21, "resetR":False}, {}, {"action":1}, {"action":0}, {}]
     #testParams = {"algType": CONTINUOUS, "maxSteps":1000000}
+
+    numRuns = 5
+    numEpisodes = 4000
+    #agents = [a.EpisodicSemiGradSARSA, a.EpisodicSemiGradSARSA, a.EpisodicSemiGradSARSA]
+    agents = [a.EpisodicSemiGradSARSA]
+    env = e.MountainCarEnvironment
+    #parameters = [{"alpha": 0.05, "gamma":1, "epsilon": 0.01, "tilings":24, "numTiles":16}, {"alpha": 0.05, "gamma":1, "epsilon": 0.05, "tilings":24, "numTiles":16}, {"alpha": 0.05, "gamma":1, "epsilon": 0.1, "tilings":24, "numTiles":16}]
+    parameters = [{"alpha": 0.01, "gamma":1, "epsilon": 0.01, "tilings":24, "numTiles":16}]
+    testParams = {"algType": EPISODIC, "maxSteps":MAX_STEPS}
 
     data = []
     labels = []

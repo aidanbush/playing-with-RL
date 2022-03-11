@@ -289,33 +289,43 @@ class AccessControlQueuing(BaseEnvironment):
         return {"numActions": self.numActions, "stateFormat": self.stateRange}
 
 class MountainCarEnvironment(BaseEnvironment):
-    position = 0
-    velocity = 0
+    #position = 0
+    #velocity = 0
+
+    numActions = 3
+
+    state = None # position, velocity
+    stateRanges = [(-1.2, 5), (-0.07, 0.07)]
 
     def init(self, params={}):
         pass
 
     def start(self):
+        self.state = np.zeros(2)
         # random start [-0.6, -0.4)
-        self.position = np.random.uniform(-0.6, -0.4)
+        #self.position = np.random.uniform(-0.6, -0.4)
+        self.state[0] = np.random.uniform(-0.6, -0.4)
 
-        self.velocity = 0
+        #self.velocity = 0
 
-        state = np.array([self.position, self.velocity])
+        #state = np.array([self.position, self.velocity])
 
-        return state
+        return self.state
 
     def step(self, action):
-        self.velocity = self.boundVelocity(self.velocity + 0.001 * action - 0.0025 * np.cos(3 * self.position))
+        #self.velocity = self.boundVelocity(self.velocity + 0.001 * action - 0.0025 * np.cos(3 * self.position))
+        self.state[1] = self.boundVelocity(self.state[1] + 0.001 * action - 0.0025 * np.cos(3 * self.state[0]))
 
-        self.position = self.boundPosition(self.position + self.velocity)
+        #self.position = self.boundPosition(self.position + self.velocity)
+        self.state[0] = self.boundPosition(self.state[0] + self.state[1])
 
-        state = np.array([self.position, self.velocity])
+        #state = np.array([self.position, self.velocity])
 
-        if self.position >= 0.5:
-            return (0, state, True)
+        #if self.position >= 0.5:
+        if self.state[0] >= 0.5:
+            return (0, self.state, True)
 
-        return (-1, state, False)
+        return (-1, self.state, False)
 
     def bound(self, val, lower, upper):
         if val > upper:
@@ -329,3 +339,6 @@ class MountainCarEnvironment(BaseEnvironment):
 
     def boundPosition(self, position):
         return self.bound(position, -1.2, 0.5)
+
+    def agentParams(self):
+        return {"numActions": self.numActions, "stateFormat": self.stateRanges}
