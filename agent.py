@@ -669,7 +669,6 @@ class EpisodicSemiGradSARSA(BaseAgent):
             numTiles = parameters["numTiles"]
             self.nTiles = numTiles
 
-            state_range = [[-1.2, -0.07], [0.5, 0.07]]
             tilecoderStateRanges = [[s[0] for s in self.stateRanges], [s[1] for s in self.stateRanges]]
 
             self.tc = representation.TileCoding(
@@ -763,7 +762,6 @@ class EpisodicSemiGradSARSA(BaseAgent):
                 * self.gradientQ(self.lastState, self.lastAction)
 
     def updateWeights(self, reward, state, action):
-        #code.interact(local=locals())
         # w = w + \alpha (R + \gamma * q_hat(S',A',w) - q_hat(S,A,w)) * gradient(q_hat(S,A,w))
         self.weights[self.lastAction] += \
             + self.alpha * (reward + self.gamma * self.Q(state, action) \
@@ -816,3 +814,163 @@ class EpisodicSemiGradSARSA(BaseAgent):
             val += self.Q(s, action)
 
         return val / iterations
+
+class EpisodicActorCritic(BaseAgent):
+    numActions = None
+    stateRanges = None
+
+    tc = None
+    nTiles = None
+
+    alphaTheta = None
+    alphaW = None
+    gamma = None
+
+    weights = None
+    thetaM = None
+    thetaSD = None
+    I = None
+
+    action = None
+
+    lastState = None
+
+    initialValue = 0
+    nullAction = -1
+
+    def __init__(self, parameters):
+        self.actionRange = parameters["actionRange"]
+        self.stateRanges = parameters["stateFormat"]
+
+        self.gamma = parameters["gamma"]
+
+        tilings = parameters["tilings"]
+        self.nTiles = parameters["numTiles"]
+
+        tilecoderStateRanges = [[s[0] for s in self.stateRanges], [s[1] for s in self.stateRanges]]
+
+        self.tc = representation.TileCoding(
+                input_indices = [np.arange(len(self.stateRanges))],
+                ntiles = [self.nTiles],
+                ntilings = [tilings],
+                hashing = None,
+                state_range = tilecoderStateRanges,
+                rnd_stream = np.random.RandomState(),
+                bias_term=False)
+
+        self.weights = np.zeros(self.tc.size)
+        self.thetaM = np.zeros(self.tc.size)
+        self.thetaSD = np.zeros(self.tc.size)
+
+        self.alphaW = parameters["alphaW"] / tilings
+        self.alphaTheta = parameters["alphaTheta"] / tilings
+
+    def start(self, observation):
+        # tilecode
+        state = self.getFeatures(observation)
+
+        self.action = self.selectAction(state)
+
+        self.lastState = state
+
+        self.I = 1
+
+        return self.action
+
+    def step(self, reward, observation):
+        # tilecode
+        state = self.getFeatures(observation)
+
+        # update
+        self.updateWeights(reward, state)
+
+        # select action
+        self.action = self.selectAction(state)
+
+        # update last
+        self.lastState = state
+
+        return self.action
+
+    def end(self, reward):
+        # dont need to tilecode
+
+        self.terminalUpdateWeights(reward)
+
+    def getFeatures(self, observation):
+        indices = self.tc(observation)
+        state = np.zeros(self.tc.size)
+
+        for i in indices:
+            state[i] = 1
+
+        return state
+
+    def mu(self, state):
+        return state.dot(self.thetaM)
+
+    def sigma(self, state):
+        return np.exp(state.dot(self.thetaSD))
+
+    def selectAction(self, state):
+        # sample from dist
+        #mean
+        mean = self.mu(state)
+        #variance
+        stddev = self.sigma(state)
+
+        action = np.random.normal(mean, stddev)
+
+        # TODO force action
+        if action < -1:
+            action = -1
+        if action > 1:
+            aciton = 1
+
+        print("mean", mean)
+        print("stddev", stddev)
+        print("action", action)
+        if math.isnan(action):
+            print("nan")
+            exit()
+
+        return action
+
+    def terminalUpdateWeights(self, reward):
+        # delta = R - v_hat(S, w)
+        delta = reward - self.V(self.lastState)
+        self.weightThetaUpdate(reward, self.lastState, delta)
+
+    def updateWeights(self, reward, state):
+        # delta = R + gamma * v_hat(S', w) - v_hat(S, w)
+        delta = reward + self.gamma * self.V(state) - self.V(self.lastState)
+        self.weightThetaUpdate(reward, self.lastState, delta)
+        # I = gamma*I
+        self.I *= self.gamma
+
+    def weightThetaUpdate(self, reward, state, delta):
+        # w = w + alpha_w * delta * gradient(v_hat(S, w))
+        self.weights += self.alphaW * delta * self.gradientV(state)
+        # theta = theta + alpha_theta * I * delta * gradient(ln(pi(A | S, theta)))
+        # mean
+        self.thetaM += self.alphaTheta * self.I * delta * self.gradientM(state, self.action)
+        # stddev
+        self.thetaSD += self.alphaTheta * self.I * delta * self.gradientSD(state, self.action)
+
+    def V(self, state):
+        return state.dot(self.weights)
+
+    def gradientV(self, state):
+        return state
+
+    def gradientM(self, state, action):
+        #(1/sigma(s*theta)^2) * (action - mu(s,theta)) * state
+        return (1 / self.sigma(state)**2) * (action - self.mu(state)) * state
+
+    def gradientSD(self, state, action):
+        # ((action - mu(s,theta))**2 / sigma(s,theta)**2 - 1) * state
+        return ((action - self.mu(state))**2 / self.sigma(state)**2 - 1) * state
+
+    def greedyAction(self, state, iterations):
+        # return mean
+        return self.mu(state)

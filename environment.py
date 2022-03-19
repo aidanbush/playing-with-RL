@@ -313,19 +313,22 @@ class MountainCarEnvironment(BaseEnvironment):
         return self.state
 
     def step(self, action):
-        #self.velocity = self.boundVelocity(self.velocity + 0.001 * action - 0.0025 * np.cos(3 * self.position))
-        self.state[1] = self.boundVelocity(self.state[1] + 0.001 * action - 0.0025 * np.cos(3 * self.state[0]))
-
-        #self.position = self.boundPosition(self.position + self.velocity)
-        self.state[0] = self.boundPosition(self.state[0] + self.state[1])
-
-        #state = np.array([self.position, self.velocity])
+        self.takeAction(action)
 
         #if self.position >= 0.5:
         if self.state[0] >= 0.5:
             return (0, self.state, True)
 
         return (-1, self.state, False)
+
+    def takeAction(self, action):
+        action -= 1
+
+        #self.velocity = self.boundVelocity(self.velocity + 0.001 * action - 0.0025 * np.cos(3 * self.position))
+        self.state[1] = self.boundVelocity(self.state[1] + 0.001 * action - 0.0025 * np.cos(3 * self.state[0]))
+
+        #self.position = self.boundPosition(self.position + self.velocity)
+        self.state[0] = self.boundPosition(self.state[0] + self.state[1])
 
     def bound(self, val, lower, upper):
         if val > upper:
@@ -342,3 +345,30 @@ class MountainCarEnvironment(BaseEnvironment):
 
     def agentParams(self):
         return {"numActions": self.numActions, "stateFormat": self.stateRanges}
+
+class MountainCarEnvironmentCA(MountainCarEnvironment):
+    actionRange = (-1, 1)
+
+    def takeAction(self, action):
+        # bound Action
+        if action < -1:
+            action = -1
+
+        if action > 1:
+            action = 1
+
+        #self.velocity = self.boundVelocity(self.velocity + 0.001 * action - 0.0025 * np.cos(3 * self.position))
+        self.state[1] = self.boundVelocity(self.state[1] + 0.001 * action - 0.0025 * np.cos(3 * self.state[0]))
+
+        #self.position = self.boundPosition(self.position + self.velocity)
+        self.state[0] = self.boundPosition(self.state[0] + self.state[1])
+
+    def agentParams(self):
+        # TODO refactor to support both, continuous and descrete action
+        return {"actionRange": self.actionRange, "stateFormat": self.stateRanges}
+
+class MeanChasing(BaseEnvironment):
+    # state (-1,1)
+    # mean is always 1
+    # reward is distance from the
+    pass
