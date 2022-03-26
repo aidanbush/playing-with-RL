@@ -219,20 +219,20 @@ def basicTest():
     #testParams = {"algType": CONTINUOUS, "maxSteps":1000000}
 
     #numRuns = 5
-    #numEpisodes = 1000
-    #agents = [a.EpisodicSemiGradSARSA, a.EpisodicSemiGradSARSA, a.EpisodicSemiGradSARSA]
-    #agents = [a.EpisodicSemiGradSARSA]
+    #numEpisodes = 200
     #env = e.MountainCarEnvironment
+    #agents = [a.EpisodicSemiGradSARSA, a.EpisodicSemiGradSARSA, a.EpisodicSemiGradSARSA]
     #parameters = [{"alpha": 0.05, "gamma":1, "epsilon": 0.01, "tilings":24, "numTiles":16}, {"alpha": 0.05, "gamma":1, "epsilon": 0.05, "tilings":24, "numTiles":16}, {"alpha": 0.05, "gamma":1, "epsilon": 0.1, "tilings":24, "numTiles":16}]
+    #agents = [a.EpisodicSemiGradSARSA]
     #parameters = [{"alpha": 0.05, "gamma":1, "epsilon": 0.1, "tilings":24, "numTiles":8}]
     #testParams = {"algType": EPISODIC, "maxSteps":MAX_STEPS}
 
     numRuns = 2
-    numEpisodes = 1000
+    numEpisodes = 1000#1000
     agents = [a.EpisodicActorCritic]
     env = e.MountainCarEnvironmentCA
-    parameters = [{"alphaW": 0.05, "alphaTheta": 0.005, "gamma":1, "tilings":8, "numTiles":8}]
-    testParams = {"algType": EPISODIC, "maxSteps":1000}
+    parameters = [{"alphaW": 0.01, "alphaTheta": 0.001, "gamma":1, "tilings":8, "numTiles":8, "tau":0.00001, "softplus":True, "softplusBeta":1}]
+    testParams = {"algType": EPISODIC, "maxSteps":2500}
 
     data = []
     labels = []

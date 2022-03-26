@@ -819,6 +819,11 @@ class EpisodicActorCritic(BaseAgent):
     numActions = None
     stateRanges = None
 
+    softAC = None
+
+    softplus = None
+    softplusBeta = None
+
     tc = None
     nTiles = None
 
@@ -841,6 +846,14 @@ class EpisodicActorCritic(BaseAgent):
     def __init__(self, parameters):
         self.actionRange = parameters["actionRange"]
         self.stateRanges = parameters["stateFormat"]
+
+        self.softAC = True
+        self.tau = parameters["tau"]
+        if self.tau == 0:
+            self.softAC = False
+
+        self.softplus = parameters["softplus"]
+        self.softplusBeta = parameters["softplusBeta"]
 
         self.gamma = parameters["gamma"]
 
@@ -878,6 +891,8 @@ class EpisodicActorCritic(BaseAgent):
         return self.action
 
     def step(self, reward, observation):
+        reward = self.modifyReward(reward)
+
         # tilecode
         state = self.getFeatures(observation)
 
@@ -893,9 +908,22 @@ class EpisodicActorCritic(BaseAgent):
         return self.action
 
     def end(self, reward):
+        reward = self.modifyReward(reward)
+
         # dont need to tilecode
 
         self.terminalUpdateWeights(reward)
+
+    def entropy(self):
+        # using last action and state
+        # 0.5 ln(2 * pi * sigma^2) + 0.5
+        #TODO removeprint(self.sigma(self.lastState))
+        return 0.5 * np.log(2 * np.pi * self.sigma(self.lastState)**2) + 0.5
+
+    def modifyReward(self, reward):
+        if self.softAC:
+            return reward + self.tau * self.entropy()
+        return reward
 
     def getFeatures(self, observation):
         indices = self.tc(observation)
@@ -910,6 +938,8 @@ class EpisodicActorCritic(BaseAgent):
         return state.dot(self.thetaM)
 
     def sigma(self, state):
+        if self.softplus:
+            return np.log(1 + np.exp(self.softplusBeta*state.dot(self.thetaSD))) / self.softplusBeta
         return np.exp(state.dot(self.thetaSD))
 
     def selectAction(self, state):
@@ -921,41 +951,54 @@ class EpisodicActorCritic(BaseAgent):
 
         action = np.random.normal(mean, stddev)
 
-        # TODO force action
+        # force action
         if action < -1:
             action = -1
         if action > 1:
-            aciton = 1
+            action = 1
 
-        print("mean", mean)
-        print("stddev", stddev)
-        print("action", action)
+        #print("mean", mean)
+        #print("stddev", stddev)
+        #print("action", action)
         if math.isnan(action):
             print("nan")
             exit()
+        if stddev == 0:
+            print(self.thetaSD)
 
         return action
 
     def terminalUpdateWeights(self, reward):
+        entropy = 0 # explicitly defined as 0
         # delta = R - v_hat(S, w)
         delta = reward - self.V(self.lastState)
-        self.weightThetaUpdate(reward, self.lastState, delta)
+        self.weightThetaUpdate(reward, self.lastState, delta, entropy)
 
     def updateWeights(self, reward, state):
+        entropy = 0
+        if self.softAC:
+            entropy = self.entropy()
         # delta = R + gamma * v_hat(S', w) - v_hat(S, w)
         delta = reward + self.gamma * self.V(state) - self.V(self.lastState)
-        self.weightThetaUpdate(reward, self.lastState, delta)
+        self.weightThetaUpdate(reward, self.lastState, delta, entropy)
         # I = gamma*I
         self.I *= self.gamma
 
-    def weightThetaUpdate(self, reward, state, delta):
+    def weightThetaUpdate(self, reward, state, delta, entropy):
+        #print("before", self.sigma(state))
         # w = w + alpha_w * delta * gradient(v_hat(S, w))
         self.weights += self.alphaW * delta * self.gradientV(state)
-        # theta = theta + alpha_theta * I * delta * gradient(ln(pi(A | S, theta)))
+        # theta = theta + alpha_theta * I * delta * gradient(ln(pi(A | S, theta))) # - tau * H(s) if soft ac
+        # (https://arxiv.org/pdf/2112.11622.pdf#subsection.C.4)
         # mean
         self.thetaM += self.alphaTheta * self.I * delta * self.gradientM(state, self.action)
         # stddev
         self.thetaSD += self.alphaTheta * self.I * delta * self.gradientSD(state, self.action)
+        if self.softAC:
+            self.thetaM += self.tau * self.gradientEntropyMu(state)
+            #print("gradEntropy", self.gradientEntropySigma(state))
+            self.thetaSD += self.tau * self.gradientEntropySigma(state)
+        #print("after", self.sigma(state))
 
     def V(self, state):
         return state.dot(self.weights)
@@ -964,12 +1007,40 @@ class EpisodicActorCritic(BaseAgent):
         return state
 
     def gradientM(self, state, action):
+        if self.softplus:
+            # beta^2 (action - mu(s,theta)) / (ln(exp(beta * s \dot theta_sigma^T)) + 1))^2 * s
+            return self.softplusBeta**2 * (action - self.mu(state)) / \
+                    np.log(np.exp(self.softplusBeta * state.dot(self.thetaSD)) + 1)**2 * state
         #(1/sigma(s*theta)^2) * (action - mu(s,theta)) * state
         return (1 / self.sigma(state)**2) * (action - self.mu(state)) * state
 
     def gradientSD(self, state, action):
+        if self.softplus:
+            # beta * s * exp(beta * state \dot theta_sigma) * (beta^2 * (a - mu(s,theta))^2 - ln(exp(beta*state \dot theta_sigma^T)+1)^2)
+            # / (exp(beta*state \dot theta_sigma^T)+1) * ln(exp(beta*state \dot theta_sigma^T)+1)^3
+            return (self.softplusBeta * state * np.exp(self.softplusBeta * state.dot(self.thetaSD)) * \
+                    (self.softplusBeta**2 * (action - self.mu(state)))**2 - \
+                    np.log(np.exp(self.softplusBeta * state.dot(self.thetaSD)) +1)**2) / \
+                    (np.exp(self.softplusBeta * state.dot(self.thetaSD) +1) * \
+                    np.log(np.exp(self.softplusBeta * state.dot(self.thetaSD)) +1)**3)
         # ((action - mu(s,theta))**2 / sigma(s,theta)**2 - 1) * state
         return ((action - self.mu(state))**2 / self.sigma(state)**2 - 1) * state
+
+    def gradientEntropyMu(self, state):
+        return 0
+
+    def gradientEntropySigma(self, state):
+        if self.softplus:
+            # X (exp(beta * theta_sigma * X) + 1) /
+            # sigma(X)^2
+            e = state * (np.exp(self.softplusBeta * self.thetaSD * state) + 1) / (self.sigma(state)**2)
+
+            # problem occurs when theta_sigma \dot X is a large negative number
+            if np.isnan(e).any():
+                print(state * (np.exp(self.softplusBeta * self.thetaSD * state) + 1))
+                print((self.sigma(state)**2))
+            return e        #X/(2*sigma)
+        return state / self.sigma(state)
 
     def greedyAction(self, state, iterations):
         # return mean
