@@ -2,6 +2,7 @@ from abc import abstractmethod
 from typing import Any
 
 import numpy as np
+import torch
 import math
 import random
 import representation
@@ -871,9 +872,12 @@ class EpisodicActorCritic(BaseAgent):
                 rnd_stream = np.random.RandomState(),
                 bias_term=False)
 
-        self.weights = np.zeros(self.tc.size)
-        self.thetaM = np.zeros(self.tc.size)
-        self.thetaSD = np.zeros(self.tc.size)
+        self.weights = torch.zeros(self.tc.size)
+        self.thetaM = torch.zeros(self.tc.size, requires_grad=True).clone()
+        self.thetaSD = torch.zeros(self.tc.size, requires_grad=True).clone()
+
+        self.thetaM.retain_grad()
+        self.thetaSD.retain_grad()
 
         self.alphaW = parameters["alphaW"] / tilings
         self.alphaTheta = parameters["alphaTheta"] / tilings
@@ -884,7 +888,7 @@ class EpisodicActorCritic(BaseAgent):
 
         self.action = self.selectAction(state)
 
-        self.lastState = state
+        self.lastState = state.clone()
 
         self.I = 1
 
@@ -903,7 +907,7 @@ class EpisodicActorCritic(BaseAgent):
         self.action = self.selectAction(state)
 
         # update last
-        self.lastState = state
+        self.lastState = state.clone()
 
         return self.action
 
@@ -917,8 +921,7 @@ class EpisodicActorCritic(BaseAgent):
     def entropy(self):
         # using last action and state
         # 0.5 ln(2 * pi * sigma^2) + 0.5
-        #TODO removeprint(self.sigma(self.lastState))
-        return 0.5 * np.log(2 * np.pi * self.sigma(self.lastState)**2) + 0.5
+        return (0.5 * torch.log(2 * np.pi * self.sigma(self.lastState)**2) + 0.5).item()
 
     def modifyReward(self, reward):
         if self.softAC:
@@ -927,7 +930,7 @@ class EpisodicActorCritic(BaseAgent):
 
     def getFeatures(self, observation):
         indices = self.tc(observation)
-        state = np.zeros(self.tc.size)
+        state = torch.zeros(self.tc.size)
 
         for i in indices:
             state[i] = 1
@@ -935,12 +938,12 @@ class EpisodicActorCritic(BaseAgent):
         return state
 
     def mu(self, state):
-        return state.dot(self.thetaM)
+        return torch.dot(self.thetaM, state)
 
     def sigma(self, state):
         if self.softplus:
-            return np.log(1 + np.exp(self.softplusBeta*state.dot(self.thetaSD))) / self.softplusBeta
-        return np.exp(state.dot(self.thetaSD))
+            return torch.nn.functional.softplus(torch.dot(self.thetaSD, state), beta=self.softplusBeta)
+        return torch.exp(torch.dot(self.thetaSD, state))
 
     def selectAction(self, state):
         # sample from dist
@@ -949,7 +952,7 @@ class EpisodicActorCritic(BaseAgent):
         #variance
         stddev = self.sigma(state)
 
-        action = np.random.normal(mean, stddev)
+        action = torch.normal(mean, stddev).item()
 
         # force action
         if action < -1:
@@ -988,59 +991,73 @@ class EpisodicActorCritic(BaseAgent):
         #print("before", self.sigma(state))
         # w = w + alpha_w * delta * gradient(v_hat(S, w))
         self.weights += self.alphaW * delta * self.gradientV(state)
-        # theta = theta + alpha_theta * I * delta * gradient(ln(pi(A | S, theta))) # - tau * H(s) if soft ac
         # (https://arxiv.org/pdf/2112.11622.pdf#subsection.C.4)
+
+        # calculate gradients
+        self.gradPi(state)
+        gradMPi = self.thetaM.grad
+        gradSDPi = self.thetaSD.grad
+
+        # theta = theta + alpha_theta * I * delta * gradient(ln(pi(A | S, theta))) # - tau * H(s) if soft ac
         # mean
-        self.thetaM += self.alphaTheta * self.I * delta * self.gradientM(state, self.action)
+        #self.thetaM = self.thetaM + self.alphaTheta * self.I * delta * gradMPi
+        self.thetaM += self.alphaTheta * self.I * delta * gradMPi
         # stddev
-        self.thetaSD += self.alphaTheta * self.I * delta * self.gradientSD(state, self.action)
+        #self.thetaSD = self.thetaSD + self.alphaTheta * self.I * delta * gradSDPi
+        self.thetaSD += self.alphaTheta * self.I * delta * gradSDPi
+
+        self.thetaM.grad = None
+        self.thetaSD.grad = None
+
+        # retain grads for next step TODO do i need???
+        #self.thetaM.retain_grad()
+        #self.thetaSD.retain_grad()
+
+        # dont need to reset gradients since the weight tensors are new and do not have a gradient calculated for them
+
         if self.softAC:
-            self.thetaM += self.tau * self.gradientEntropyMu(state)
-            #print("gradEntropy", self.gradientEntropySigma(state))
-            self.thetaSD += self.tau * self.gradientEntropySigma(state)
+            #print(self.thetaM.requires_grad)
+            #print(self.thetaSD.requires_grad)
+            self.gradEntropy(state)
+            gradMEntropy = self.thetaM.grad
+            #print(gradMEntropy)
+            gradSDEntropy = self.thetaSD.grad
+            #print(gradSDEntropy)
+
+            if (gradMEntropy == None):
+                gradMEntropy = 0
+
+            if (gradSDEntropy == None):
+                gradSDEntropy = 0
+
+            self.thetaM += self.tau * gradMEntropy
+            self.thetaSD += self.tau * gradSDEntropy
+
+            self.thetaM.grad = None
+            self.thetaSD.grad = None
+
+            # retain grads for next step
+            #self.thetaM.retain_grad()
+            #self.thetaSD.retain_grad()
+
         #print("after", self.sigma(state))
 
     def V(self, state):
-        return state.dot(self.weights)
+        return torch.dot(self.weights, state)
 
     def gradientV(self, state):
-        return state
+        return state.clone()
 
-    def gradientM(self, state, action):
-        if self.softplus:
-            # beta^2 (action - mu(s,theta)) / (ln(exp(beta * s \dot theta_sigma^T)) + 1))^2 * s
-            return self.softplusBeta**2 * (action - self.mu(state)) / \
-                    np.log(np.exp(self.softplusBeta * state.dot(self.thetaSD)) + 1)**2 * state
-        #(1/sigma(s*theta)^2) * (action - mu(s,theta)) * state
-        return (1 / self.sigma(state)**2) * (action - self.mu(state)) * state
+    def gradPi(self, state):
+        sigma = self.sigma(state)
+        mu = self.mu(state)
+        H = torch.log(1/(sigma * (2*np.pi)**0.5) * torch.exp(0.5 * ((self.action - mu) / sigma)**2))
+        H.backward()
 
-    def gradientSD(self, state, action):
-        if self.softplus:
-            # beta * s * exp(beta * state \dot theta_sigma) * (beta^2 * (a - mu(s,theta))^2 - ln(exp(beta*state \dot theta_sigma^T)+1)^2)
-            # / (exp(beta*state \dot theta_sigma^T)+1) * ln(exp(beta*state \dot theta_sigma^T)+1)^3
-            return (self.softplusBeta * state * np.exp(self.softplusBeta * state.dot(self.thetaSD)) * \
-                    (self.softplusBeta**2 * (action - self.mu(state)))**2 - \
-                    np.log(np.exp(self.softplusBeta * state.dot(self.thetaSD)) +1)**2) / \
-                    (np.exp(self.softplusBeta * state.dot(self.thetaSD) +1) * \
-                    np.log(np.exp(self.softplusBeta * state.dot(self.thetaSD)) +1)**3)
-        # ((action - mu(s,theta))**2 / sigma(s,theta)**2 - 1) * state
-        return ((action - self.mu(state))**2 / self.sigma(state)**2 - 1) * state
-
-    def gradientEntropyMu(self, state):
-        return 0
-
-    def gradientEntropySigma(self, state):
-        if self.softplus:
-            # X (exp(beta * theta_sigma * X) + 1) /
-            # sigma(X)^2
-            e = state * (np.exp(self.softplusBeta * self.thetaSD * state) + 1) / (self.sigma(state)**2)
-
-            # problem occurs when theta_sigma \dot X is a large negative number
-            if np.isnan(e).any():
-                print(state * (np.exp(self.softplusBeta * self.thetaSD * state) + 1))
-                print((self.sigma(state)**2))
-            return e        #X/(2*sigma)
-        return state / self.sigma(state)
+    def gradEntropy(self, state):
+        sigma_plus = torch.nn.functional.softplus(torch.dot(self.thetaSD, state),beta=self.softplusBeta)
+        H = 0.5 * torch.log(2 * np.pi * sigma_plus**2) + 0.5
+        H.backward()
 
     def greedyAction(self, state, iterations):
         # return mean
