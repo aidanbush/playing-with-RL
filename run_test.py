@@ -231,7 +231,7 @@ def basicTest():
     numEpisodes = 1000#1000
     agents = [a.EpisodicActorCritic]
     env = e.MountainCarEnvironmentCA
-    parameters = [{"alphaW": 0.01, "alphaTheta": 0.001, "gamma":1, "tilings":8, "numTiles":8, "tau":0.00001, "softplus":True, "softplusBeta":1}]
+    parameters = [{"alphaW": 0.01, "alphaTheta": 0.0001, "gamma":1, "tilings":8, "numTiles":8, "tau":0.01, "softplus":True, "softplusBeta":1}]
     testParams = {"algType": EPISODIC, "maxSteps":2500}
 
     data = []

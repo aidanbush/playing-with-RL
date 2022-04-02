@@ -836,6 +836,7 @@ class EpisodicActorCritic(BaseAgent):
     thetaM = None
     thetaSD = None
     I = None
+    optimizer = None
 
     action = None
 
@@ -847,11 +848,6 @@ class EpisodicActorCritic(BaseAgent):
     def __init__(self, parameters):
         self.actionRange = parameters["actionRange"]
         self.stateRanges = parameters["stateFormat"]
-
-        self.softAC = True
-        self.tau = parameters["tau"]
-        if self.tau == 0:
-            self.softAC = False
 
         self.softplus = parameters["softplus"]
         self.softplusBeta = parameters["softplusBeta"]
@@ -873,14 +869,18 @@ class EpisodicActorCritic(BaseAgent):
                 bias_term=False)
 
         self.weights = torch.zeros(self.tc.size)
-        self.thetaM = torch.zeros(self.tc.size, requires_grad=True).clone()
-        self.thetaSD = torch.zeros(self.tc.size, requires_grad=True).clone()
-
-        self.thetaM.retain_grad()
-        self.thetaSD.retain_grad()
+        self.thetaM = torch.zeros(self.tc.size, requires_grad=True)
+        self.thetaSD = torch.zeros(self.tc.size, requires_grad=True)
 
         self.alphaW = parameters["alphaW"] / tilings
         self.alphaTheta = parameters["alphaTheta"] / tilings
+
+        self.softAC = True
+        self.tau = parameters["tau"] / tilings
+        if self.tau == 0:
+            self.softAC = False
+
+        self.optimizer = torch.optim.SGD([self.thetaM, self.thetaSD], lr=self.alphaTheta, maximize=True)
 
     def start(self, observation):
         # tilecode
@@ -892,11 +892,9 @@ class EpisodicActorCritic(BaseAgent):
 
         self.I = 1
 
-        return self.action
+        return self.action.item()
 
     def step(self, reward, observation):
-        reward = self.modifyReward(reward)
-
         # tilecode
         state = self.getFeatures(observation)
 
@@ -909,24 +907,12 @@ class EpisodicActorCritic(BaseAgent):
         # update last
         self.lastState = state.clone()
 
-        return self.action
+        return self.action.item()
 
     def end(self, reward):
-        reward = self.modifyReward(reward)
-
         # dont need to tilecode
 
         self.terminalUpdateWeights(reward)
-
-    def entropy(self):
-        # using last action and state
-        # 0.5 ln(2 * pi * sigma^2) + 0.5
-        return (0.5 * torch.log(2 * np.pi * self.sigma(self.lastState)**2) + 0.5).item()
-
-    def modifyReward(self, reward):
-        if self.softAC:
-            return reward + self.tau * self.entropy()
-        return reward
 
     def getFeatures(self, observation):
         indices = self.tc(observation)
@@ -938,12 +924,14 @@ class EpisodicActorCritic(BaseAgent):
         return state
 
     def mu(self, state):
-        return torch.dot(self.thetaM, state)
+        return torch.dot(self.thetaM, state).reshape(1,1)
 
     def sigma(self, state):
         if self.softplus:
-            return torch.nn.functional.softplus(torch.dot(self.thetaSD, state), beta=self.softplusBeta)
-        return torch.exp(torch.dot(self.thetaSD, state))
+            sigma = torch.nn.functional.softplus(torch.dot(self.thetaSD, state), beta=self.softplusBeta)
+        else:
+            sigma = torch.exp(torch.dot(self.thetaSD, state))
+        return sigma.reshape(1,1)
 
     def selectAction(self, state):
         # sample from dist
@@ -952,112 +940,86 @@ class EpisodicActorCritic(BaseAgent):
         #variance
         stddev = self.sigma(state)
 
-        action = torch.normal(mean, stddev).item()
+        action = torch.normal(mean, stddev)
 
         # force action
-        if action < -1:
-            action = -1
-        if action > 1:
-            action = 1
+        if action.item() < -1:
+            action = torch.tensor([-1])
+        if action.item() > 1:
+            action = torch.tensor([1])
 
         #print("mean", mean)
         #print("stddev", stddev)
         #print("action", action)
-        if math.isnan(action):
+        if math.isnan(action.item()):
             print("nan")
             exit()
         if stddev == 0:
+            print("stdev = 0")
             print(self.thetaSD)
+            print(self.thetaM)
+            print(self.weights)
+            print(state)
+            exit()
 
         return action
 
     def terminalUpdateWeights(self, reward):
-        entropy = 0 # explicitly defined as 0
+        mu = self.mu(self.lastState)
+        sigma = self.sigma(self.lastState)
+        dist = torch.distributions.multivariate_normal.MultivariateNormal(mu, covariance_matrix=sigma)
+
         # delta = R - v_hat(S, w)
         delta = reward - self.V(self.lastState)
-        self.weightThetaUpdate(reward, self.lastState, delta, entropy)
+        self.weightThetaUpdate(reward, self.lastState, delta, 0, dist)
 
     def updateWeights(self, reward, state):
-        entropy = 0
+        mu = self.mu(self.lastState)
+        sigma = self.sigma(self.lastState)
+        dist = torch.distributions.multivariate_normal.MultivariateNormal(mu, covariance_matrix=sigma)
+
+        entropy = dist.entropy()
         if self.softAC:
-            entropy = self.entropy()
+            reward += self.tau * entropy
+
         # delta = R + gamma * v_hat(S', w) - v_hat(S, w)
         delta = reward + self.gamma * self.V(state) - self.V(self.lastState)
-        self.weightThetaUpdate(reward, self.lastState, delta, entropy)
+        self.weightThetaUpdate(reward, self.lastState, delta, entropy, dist)
+
         # I = gamma*I
         self.I *= self.gamma
 
-    def weightThetaUpdate(self, reward, state, delta, entropy):
-        #print("before", self.sigma(state))
+    def weightThetaUpdate(self, reward, state, delta, entropy, dist):
+        #print("before", self.sigma(state), self.mu(state))
         # w = w + alpha_w * delta * gradient(v_hat(S, w))
         self.weights += self.alphaW * delta * self.gradientV(state)
         # (https://arxiv.org/pdf/2112.11622.pdf#subsection.C.4)
 
-        # calculate gradients
-        self.gradPi(state)
-        gradMPi = self.thetaM.grad
-        gradSDPi = self.thetaSD.grad
-
-        # theta = theta + alpha_theta * I * delta * gradient(ln(pi(A | S, theta))) # - tau * H(s) if soft ac
-        # mean
-        #self.thetaM = self.thetaM + self.alphaTheta * self.I * delta * gradMPi
-        self.thetaM += self.alphaTheta * self.I * delta * gradMPi
-        # stddev
-        #self.thetaSD = self.thetaSD + self.alphaTheta * self.I * delta * gradSDPi
-        self.thetaSD += self.alphaTheta * self.I * delta * gradSDPi
-
-        self.thetaM.grad = None
-        self.thetaSD.grad = None
-
-        # retain grads for next step TODO do i need???
-        #self.thetaM.retain_grad()
-        #self.thetaSD.retain_grad()
-
-        # dont need to reset gradients since the weight tensors are new and do not have a gradient calculated for them
-
         if self.softAC:
-            #print(self.thetaM.requires_grad)
-            #print(self.thetaSD.requires_grad)
-            self.gradEntropy(state)
-            gradMEntropy = self.thetaM.grad
-            #print(gradMEntropy)
-            gradSDEntropy = self.thetaSD.grad
-            #print(gradSDEntropy)
+            loss = dist.log_prob(self.action.detach()) * delta.detach() * self.I + self.tau * entropy
+        else:
+            loss = dist.log_prob(self.action.detach()) * delta.detach() * self.I
 
-            if (gradMEntropy == None):
-                gradMEntropy = 0
+        loss.backward()
+        self.optimizer.step()
 
-            if (gradSDEntropy == None):
-                gradSDEntropy = 0
+        #print("entropy", entropy)
+        #print("entropy update", self.tau * entropy)
+        # TODO print non zero gradients
 
-            self.thetaM += self.tau * gradMEntropy
-            self.thetaSD += self.tau * gradSDEntropy
+        if (self.sigma(state).item() == 0):
+            print("mu gradient")
+            print(self.thetaM.grad)
+            print("sigma gradient")
+            print(self.thetaSD.grad)
 
-            self.thetaM.grad = None
-            self.thetaSD.grad = None
-
-            # retain grads for next step
-            #self.thetaM.retain_grad()
-            #self.thetaSD.retain_grad()
-
-        #print("after", self.sigma(state))
+        #print("after", self.sigma(state), self.mu(state))
 
     def V(self, state):
         return torch.dot(self.weights, state)
 
     def gradientV(self, state):
         return state.clone()
-
-    def gradPi(self, state):
-        sigma = self.sigma(state)
-        mu = self.mu(state)
-        H = torch.log(1/(sigma * (2*np.pi)**0.5) * torch.exp(0.5 * ((self.action - mu) / sigma)**2))
-        H.backward()
-
-    def gradEntropy(self, state):
-        sigma_plus = torch.nn.functional.softplus(torch.dot(self.thetaSD, state),beta=self.softplusBeta)
-        H = 0.5 * torch.log(2 * np.pi * sigma_plus**2) + 0.5
-        H.backward()
 
     def greedyAction(self, state, iterations):
         # return mean
