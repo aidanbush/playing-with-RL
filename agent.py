@@ -6,6 +6,9 @@ import torch
 import math
 import random
 import representation
+import code
+
+import pdb
 
 class BaseAgent:
     @abstractmethod
@@ -883,6 +886,7 @@ class EpisodicActorCritic(BaseAgent):
         self.optimizer = torch.optim.SGD([self.thetaM, self.thetaSD], lr=self.alphaTheta, maximize=True)
 
     def start(self, observation):
+        #pdb.set_trace()
         # tilecode
         state = self.getFeatures(observation)
 
@@ -895,6 +899,7 @@ class EpisodicActorCritic(BaseAgent):
         return self.action.item()
 
     def step(self, reward, observation):
+        #pdb.set_trace()
         # tilecode
         state = self.getFeatures(observation)
 
@@ -906,6 +911,14 @@ class EpisodicActorCritic(BaseAgent):
 
         # update last
         self.lastState = state.clone()
+
+        print("end of step")
+        print("sigma\n", self.thetaSD)
+        print("sigma gradient\n", self.thetaSD.grad)
+        print("state\n", state)
+        print("mu\n", self.thetaM)
+        print("action\n", self.action)
+        print("stdev", self.sigma(state))
 
         return self.action.item()
 
@@ -956,10 +969,11 @@ class EpisodicActorCritic(BaseAgent):
             exit()
         if stddev == 0:
             print("stdev = 0")
-            print(self.thetaSD)
-            print(self.thetaM)
-            print(self.weights)
-            print(state)
+            print("sigma\n", self.thetaSD)
+            print("sigma gradient\n", self.thetaSD.grad)
+            print("state\n", state)
+            print("mu\n", self.thetaM)
+            print("action\n", self.action)
             exit()
 
         return action
@@ -967,7 +981,8 @@ class EpisodicActorCritic(BaseAgent):
     def terminalUpdateWeights(self, reward):
         mu = self.mu(self.lastState)
         sigma = self.sigma(self.lastState)
-        dist = torch.distributions.multivariate_normal.MultivariateNormal(mu, covariance_matrix=sigma)
+        #dist = torch.distributions.multivariate_normal.MultivariateNormal(mu, covariance_matrix=sigma)
+        dist = torch.distributions.normal.Normal(mu, sigma)
 
         # delta = R - v_hat(S, w)
         delta = reward - self.V(self.lastState)
@@ -976,9 +991,10 @@ class EpisodicActorCritic(BaseAgent):
     def updateWeights(self, reward, state):
         mu = self.mu(self.lastState)
         sigma = self.sigma(self.lastState)
-        dist = torch.distributions.multivariate_normal.MultivariateNormal(mu, covariance_matrix=sigma)
+        #dist = torch.distributions.multivariate_normal.MultivariateNormal(mu, covariance_matrix=sigma)
+        dist = torch.distributions.normal.Normal(mu, sigma)
 
-        entropy = dist.entropy()
+        entropy = dist.entropy().reshape(1)
         if self.softAC:
             reward += self.tau * entropy
 
@@ -992,7 +1008,7 @@ class EpisodicActorCritic(BaseAgent):
     def weightThetaUpdate(self, reward, state, delta, entropy, dist):
         #print("before", self.sigma(state), self.mu(state))
         # w = w + alpha_w * delta * gradient(v_hat(S, w))
-        self.weights += self.alphaW * delta * self.gradientV(state)
+        self.weights += self.alphaW * delta * self.gradientV(self.lastState)
         # (https://arxiv.org/pdf/2112.11622.pdf#subsection.C.4)
 
         if self.softAC:
@@ -1008,11 +1024,20 @@ class EpisodicActorCritic(BaseAgent):
         # TODO print non zero gradients
 
         if (self.sigma(state).item() == 0):
-            print("mu gradient")
-            print(self.thetaM.grad)
-            print("sigma gradient")
-            print(self.thetaSD.grad)
+            #print("mu gradient")
+            #print(self.thetaM.grad)
+            #print("sigma gradient")
+            #print(self.thetaSD.grad)
+            pass
 
+        if self.sigma(state) == 0:
+            print("update stddev == 0")
+            print("sigma\n", self.thetaSD)
+            print("sigma gradient\n", self.thetaSD.grad)
+            print("state\n", state)
+            print("mu\n", self.thetaM)
+            print("action\n", self.action)
+            code.interact(local=locals())
         #print("after", self.sigma(state), self.mu(state))
 
     def V(self, state):
