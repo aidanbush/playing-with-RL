@@ -3,9 +3,11 @@ from typing import Any
 
 import numpy as np
 import torch
+import torch.nn as nn
 import math
 import random
 import representation
+from collections import namedtuple, deque
 import code
 
 import pdb
@@ -134,7 +136,7 @@ class TabularSARSA(BaseAgent):
         # select action
         action = self.selectAction(observation)
 
-        # update Q
+        # update BaseAgentQ
         self.updateActionValue(observation, action, reward)
 
         # store state and action
@@ -1049,3 +1051,179 @@ class EpisodicActorCritic(BaseAgent):
     def greedyAction(self, state, iterations):
         # return mean
         return self.mu(state)
+
+class DQN(BaseAgent):
+    numActions = None
+    stateRanges = []
+    nullAction = -1
+
+    policyNet = None
+    targetNet = None
+    buffer = None
+    optimizer = None
+
+    batchSize = None
+    episodeNumber = None
+
+    gamma = None
+    epsilon = None
+
+    Transition = namedtuple('Transition',
+                            ('state', 'action', 'next_state', 'reward'))
+
+    class ReplayMemory(object):
+        def __init__(self, capacity, outerClass):
+            self.memory = deque([],maxlen=capacity)
+            self.outerClass = outerClass
+
+        def push(self, *args):
+            """Save a transition"""
+            self.memory.append(self.outerClass.Transition(*args))
+
+        def sample(self, batch_size):
+            return random.sample(self.memory, batch_size)
+
+        def __len__(self):
+            return len(self.memory)
+
+    class DQNNetwork(nn.Module):
+        def __init__(self, num_inputs, num_outputs):
+            super().__init__()
+            # an affine operation: y = Wx + b
+            self.fc1 = nn.Linear(num_inputs, 64)
+            self.fc2 = nn.Linear(64, 64)
+            self.fc3 = nn.Linear(64, 64)
+            self.fc4 = nn.Linear(64, num_outputs)
+
+            nn.init.xavier_normal_(self.fc1.weight, 1.)
+            nn.init.xavier_normal_(self.fc2.weight, 1.)
+            nn.init.xavier_normal_(self.fc3.weight, 1.)
+            nn.init.xavier_normal_(self.fc4.weight, 1.)
+
+        def forward(self, x):
+            x = nn.functional.relu(self.fc1(x))
+            x = nn.functional.relu(self.fc2(x))
+            x = nn.functional.relu(self.fc3(x))
+            x = self.fc4(x)
+            return x
+
+    def __init__(self, parameters):
+        self.numActions = parameters["numActions"]
+        # [(xmin, x max), (y min, y max), (z min, z max) ...]
+        self.stateRanges = torch.tensor(parameters["stateFormat"], dtype=torch.float)
+
+        self.epsilon = parameters["epsilon"]
+        self.gamma = parameters["gamma"]
+
+        self.targetUpdate = parameters["targetUpdate"]
+        self.batchSize = parameters["batchSize"]
+        self.episodeNumber = 0
+
+        # create network
+        self.policyNet = self.DQNNetwork(len(self.stateRanges), self.numActions)
+        self.targetNet = self.DQNNetwork(len(self.stateRanges), self.numActions)
+
+        self.targetNet.load_state_dict(self.policyNet.state_dict())
+        self.targetNet.eval()
+
+        self.buffer = self.ReplayMemory(parameters["bufferCap"], self)
+        self.optimizer = torch.optim.Adam(self.policyNet.parameters(), betas=(.9,.999), lr=parameters["alpha"])
+
+    def start(self, observation):
+        state = self.getState(observation);
+
+        # select action
+        action = self.selectAction(state, observation)
+
+        self.lastState = state
+        self.lastAction = action.clone()
+
+        return action
+
+    def step(self, reward, observation):
+        #print("step")
+        reward = torch.tensor(reward).view(1, 1)
+        state = self.getState(observation);
+
+        # store transition in memory
+        self.buffer.push(self.lastState, self.lastAction, state, reward)
+
+        # select action
+        action = self.selectAction(state, observation)
+
+        # update model
+        self.trainModels()
+
+        self.lastState = state
+        self.lastAction = action.clone()
+
+        return action
+
+    def end(self, reward):
+        reward = torch.tensor(reward).view(1, 1)
+        # store transition in memory
+        self.buffer.push(self.lastState, self.lastAction, None, reward)
+
+        # update model
+        self.trainModels()
+
+        # if time to update target network
+        if self.episodeNumber % self.targetUpdate == 0:
+            self.targetNet.load_state_dict(self.policyNet.state_dict())
+
+        self.episodeNumber += 1
+
+    def getState(self, observation):
+        # normalize state
+        transpose = self.stateRanges.transpose(0,1)
+        sMin = transpose[0]
+        sMax = transpose[1]
+        state = (torch.tensor(observation) - sMin) / (sMax - sMin)
+        return state.float().view(1,2)
+
+    def selectAction(self, state, observation):
+        # e greedy
+        if np.random.random() < self.epsilon:
+            action = torch.randint(self.numActions, (1,)).view(1, 1)
+        else:
+            with torch.no_grad():
+                action = self.policyNet(state).argmax().view(1, 1)
+
+        return action
+
+    def trainModels(self):
+        if len(self.buffer) < self.batchSize:
+            return
+
+        # extract a batch to train on
+        batch = self.Transition(*zip(*self.buffer.sample(self.batchSize)))
+
+        # create two masks for the final states
+        non_final_mask = torch.tensor(tuple(map(lambda s: s is not None,
+                                              batch.next_state)), dtype=torch.bool)
+        non_final_next_states = torch.cat([s for s in batch.next_state
+                                                    if s is not None])
+
+        state_batch = torch.cat(batch.state)
+        action_batch = torch.cat(batch.action)
+        reward_batch = torch.cat(batch.reward)
+
+        # Q(s_t,a) - select the value for the selected action
+        state_action_values = self.policyNet(state_batch).gather(1, action_batch)
+
+        # compute V(s_t+1) - it is 0 if the state is final
+        next_state_values = torch.zeros(self.batchSize)
+        next_state_values[non_final_mask] = self.targetNet(non_final_next_states).max(1)[0].detach()
+        # Compute the expected Q values
+        expected_state_action_values = (next_state_values.unsqueeze(-1) * self.gamma) + reward_batch
+
+        # Compute Huber loss
+        criterion = nn.MSELoss()#SmoothL1Loss()
+        loss = criterion(state_action_values, expected_state_action_values)
+
+        # Optimize the model
+        self.optimizer.zero_grad()
+        loss.backward()
+        #for param in self.policyNet.parameters():
+        #    param.grad.data.clamp_(-1, 1)
+        self.optimizer.step()

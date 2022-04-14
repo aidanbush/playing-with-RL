@@ -229,13 +229,20 @@ def basicTest():
     #parameters = [{"alpha": 0.05, "gamma":1, "epsilon": 0.1, "tilings":24, "numTiles":8}]
     #testParams = {"algType": EPISODIC, "maxSteps":MAX_STEPS}
 
-    numRuns = 2
-    numEpisodes = 1000#1000
-    agents = [a.EpisodicActorCritic]
-    env = e.MountainCarEnvironmentCA
-    parameters = [{"alphaW": 0.01, "alphaTheta": 0.001, "gamma":1, "tilings":8, "numTiles":8, "tau":0.01, "softplus":True, "softplusBeta":1}]
+    #numRuns = 2
+    #numEpisodes = 1000#1000
+    #agents = [a.EpisodicActorCritic]
+    #env = e.MountainCarEnvironmentCA
+    #parameters = [{"alphaW": 0.01, "alphaTheta": 0.001, "gamma":1, "tilings":8, "numTiles":8, "tau":0.01, "softplus":True, "softplusBeta":1}]
     #parameters = [{"alphaW": 0.01, "alphaTheta": 0.001, "gamma":1, "tilings":8, "numTiles":8, "tau":0, "softplus":True, "softplusBeta":1}]
-    testParams = {"algType": EPISODIC, "maxSteps":2500}
+    #testParams = {"algType": EPISODIC, "maxSteps":2500}
+
+    numRuns = 2
+    numEpisodes = 200#1000
+    agents = [a.DQN]
+    env = e.MountainCarEnvironment
+    parameters = [{"alpha": 2**-11, "gamma":0.999, "epsilon": 0.1, "targetUpdate": 1, "batchSize": 32, "bufferCap":4000}]
+    testParams = {"algType": EPISODIC, "maxSteps":2000}
 
     data = []
     labels = []
