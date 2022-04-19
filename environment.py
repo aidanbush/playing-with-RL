@@ -3,6 +3,7 @@ from typing import Any, Dict, Tuple
 
 import numpy as np
 import math
+import gym
 
 class BaseEnvironment:
     @abstractmethod
@@ -295,10 +296,11 @@ class MountainCarEnvironment(BaseEnvironment):
     numActions = 3
 
     state = None # position, velocity
+    sparseReward = False
     stateRanges = [(-1.2, 5), (-0.07, 0.07)]
 
     def init(self, params={}):
-        pass
+        self.sparseReward = params["sparseReward"]
 
     def start(self):
         self.state = np.zeros(2)
@@ -315,11 +317,25 @@ class MountainCarEnvironment(BaseEnvironment):
     def step(self, action):
         self.takeAction(action)
 
+        end = False
+
+        reward = -1
+        if self.sparseReward:
+            reward = 0
+
         #if self.position >= 0.5:
         if self.state[0] >= 0.5:
-            return (0, self.state, True)
+            if self.sparseReward:
+                reward = 1
+            else:
+                reward = 0
 
-        return (-1, self.state, False)
+            end = True
+            #return (0, self.state, True)
+
+        #return (-1, self.state, False)
+
+        return (reward, self.state, end)
 
     def takeAction(self, action):
         action -= 1
@@ -346,6 +362,35 @@ class MountainCarEnvironment(BaseEnvironment):
     def agentParams(self):
         return {"numActions": self.numActions, "stateFormat": self.stateRanges}
 
+
+class GymMountainCarEnvironment(BaseEnvironment):
+    envName = "MountainCarCustom-v0"
+    env = None
+
+    def __init__(self):
+        gym.envs.register(
+            id=self.envName,
+            entry_point='gym.envs.classic_control:MountainCarEnv',
+            max_episode_steps=400,      # MountainCar-v0 uses 200
+        )
+
+        self.env = gym.make(self.envName)
+
+    def init(self, params):
+        pass
+
+    def start(self):
+        return self.env.reset()
+
+    def step(self, action): # last is forced action None if
+        s = self.env.step(action)
+        return s[1], s[0], s[2]
+
+    def agentParams(self):
+        stateFormat = list(zip(self.env.observation_space.low, self.env.observation_space.high))
+        return {"numActions": self.env.action_space.n, "stateFormat": stateFormat}
+
+
 class MountainCarEnvironmentCA(MountainCarEnvironment):
     actionRange = (-1, 1)
 
@@ -366,6 +411,26 @@ class MountainCarEnvironmentCA(MountainCarEnvironment):
     def agentParams(self):
         # TODO refactor to support both, continuous and descrete action
         return {"actionRange": self.actionRange, "stateFormat": self.stateRanges}
+
+class GymMountainCarEnvironmentCA(GymMountainCarEnvironment):
+    envName = "MountainCarContinuousCustom-v0"
+
+    def __init__(self):
+        gym.envs.register(
+            id=self.envName,
+            entry_point='gym.envs.classic_control:Continuous_MountainCarEnv',
+            max_episode_steps=400,      # MountainCar-v0 uses 200
+        )
+
+        self.env = gym.make(self.envName)
+
+    def step(self, action):
+        return super().step(np.array([action]))
+
+    def agentParams(self):
+        stateFormat = list(zip(self.env.observation_space.low, self.env.observation_space.high))
+        actionRange = [self.env.action_space.low, self.env.action_space.high]
+        return {"actionRange": actionRange, "stateFormat": stateFormat}
 
 class MeanChasing(BaseEnvironment):
     # state (-1,1)

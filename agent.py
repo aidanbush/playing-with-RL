@@ -12,6 +12,8 @@ import code
 
 import pdb
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 class BaseAgent:
     @abstractmethod
     def start(self, observation: Any) -> int:
@@ -130,9 +132,7 @@ class TabularSARSA(BaseAgent):
         # return action
         return action
 
-    def step(self, reward, observation, forcedAction):
-        if forcedAction != None:
-            self.lastAction = forcedAction
+    def step(self, reward, observation):
         # select action
         action = self.selectAction(observation)
 
@@ -145,9 +145,7 @@ class TabularSARSA(BaseAgent):
 
         return action
 
-    def end(self, reward, forcedAction):
-        if forcedAction != None:
-            self.lastAction = forcedAction
+    def end(self, reward):
         self.terminalUpdateActionValue(reward)
 
     def selectAction(self, state):
@@ -238,6 +236,7 @@ class TabularSARSA(BaseAgent):
     def sampleStateAction(self, state, action, iterations):
         # check if any of the states are set to None
         if not None in state:
+            state =list(map(int, state))
             return self.Q(state, action)
 
         val = 0
@@ -1092,19 +1091,23 @@ class DQN(BaseAgent):
             # an affine operation: y = Wx + b
             self.fc1 = nn.Linear(num_inputs, 64)
             self.fc2 = nn.Linear(64, 64)
-            self.fc3 = nn.Linear(64, 64)
-            self.fc4 = nn.Linear(64, num_outputs)
+            #self.fc3 = nn.Linear(64, 64)
+            #self.fc4 = nn.Linear(64, num_outputs)
+            self.fc3 = nn.Linear(64, num_outputs)
 
-            nn.init.xavier_normal_(self.fc1.weight, 1.)
-            nn.init.xavier_normal_(self.fc2.weight, 1.)
-            nn.init.xavier_normal_(self.fc3.weight, 1.)
-            nn.init.xavier_normal_(self.fc4.weight, 1.)
+            #nn.init.xavier_normal_(self.fc1.weight, 1.)
+            #nn.init.xavier_normal_(self.fc2.weight, 1.)
+            ##nn.init.xavier_normal_(self.fc3.weight, 1.)
+            ##nn.init.xavier_normal_(self.fc4.weight, 1.)
+            #nn.init.xavier_normal_(self.fc3.weight, 1.)
 
         def forward(self, x):
+            x.to(device)
             x = nn.functional.relu(self.fc1(x))
             x = nn.functional.relu(self.fc2(x))
-            x = nn.functional.relu(self.fc3(x))
-            x = self.fc4(x)
+            #x = nn.functional.relu(self.fc3(x))
+            #x = self.fc4(x)
+            x = self.fc3(x)
             return x
 
     def __init__(self, parameters):
@@ -1120,8 +1123,8 @@ class DQN(BaseAgent):
         self.episodeNumber = 0
 
         # create network
-        self.policyNet = self.DQNNetwork(len(self.stateRanges), self.numActions)
-        self.targetNet = self.DQNNetwork(len(self.stateRanges), self.numActions)
+        self.policyNet = self.DQNNetwork(len(self.stateRanges), self.numActions).to(device)
+        self.targetNet = self.DQNNetwork(len(self.stateRanges), self.numActions).to(device)
 
         self.targetNet.load_state_dict(self.policyNet.state_dict())
         self.targetNet.eval()
@@ -1136,9 +1139,9 @@ class DQN(BaseAgent):
         action = self.selectAction(state, observation)
 
         self.lastState = state
-        self.lastAction = action.clone()
+        self.lastAction = action
 
-        return action
+        return action.item()
 
     def step(self, reward, observation):
         #print("step")
@@ -1155,9 +1158,9 @@ class DQN(BaseAgent):
         self.trainModels()
 
         self.lastState = state
-        self.lastAction = action.clone()
+        self.lastAction = action
 
-        return action
+        return action.item()
 
     def end(self, reward):
         reward = torch.tensor(reward).view(1, 1)
@@ -1179,11 +1182,15 @@ class DQN(BaseAgent):
         sMin = transpose[0]
         sMax = transpose[1]
         state = (torch.tensor(observation) - sMin) / (sMax - sMin)
-        return state.float().view(1,2)
+        return state.float().view(1, state.shape[0])
+
+    def greedyAction(self, stateSampleIterations):
+        with torch.no_grad():
+            return self.policyNet(state).argmax().view(1, 1)
 
     def selectAction(self, state, observation):
         # e greedy
-        if np.random.random() < self.epsilon:
+        if np.random.random() <= self.epsilon:
             action = torch.randint(self.numActions, (1,)).view(1, 1)
         else:
             with torch.no_grad():
@@ -1218,8 +1225,11 @@ class DQN(BaseAgent):
         expected_state_action_values = (next_state_values.unsqueeze(-1) * self.gamma) + reward_batch
 
         # Compute Huber loss
-        criterion = nn.MSELoss()#SmoothL1Loss()
-        loss = criterion(state_action_values, expected_state_action_values)
+        #criterion = nn.MSELoss()#SmoothL1Loss()
+        #loss = criterion(state_action_values, expected_state_action_values)
+        # 0.5 from TDQC paper
+        #loss = 0.5 * nn.functional.mse_loss(state_action_values, expected_state_action_values)
+        loss = nn.functional.mse_loss(state_action_values, expected_state_action_values)
 
         # Optimize the model
         self.optimizer.zero_grad()
@@ -1227,3 +1237,8 @@ class DQN(BaseAgent):
         #for param in self.policyNet.parameters():
         #    param.grad.data.clamp_(-1, 1)
         self.optimizer.step()
+
+class DQNTabular(DQN):
+    def __init__(self, parameters):
+        parameters["stateFormat"] = [(0, s) for s in parameters["stateFormat"]]
+        super().__init__(parameters)

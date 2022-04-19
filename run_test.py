@@ -43,9 +43,13 @@ def runTest(numRuns, numEpisodes, agent, env, parameters, testParams, report=Fal
             steps.append(stepsData[j][i])
             returns.append(returnsData[j][i])
         stepsMeans[i] = statistics.mean(steps)
-        stepsStdev[i] = statistics.stdev(steps)
         returnsMeans[i] = statistics.mean(returns)
-        returnsStdev[i] = statistics.stdev(returns)
+        if numRuns > 1:
+            stepsStdev[i] = statistics.stdev(steps)
+            returnsStdev[i] = statistics.stdev(returns)
+        else:
+            stepsStdev[i] = 0
+            returnsStdev[i] = 0
 
     return stepsMeans, stepsStdev, returnsMeans, returnsStdev
 
@@ -82,6 +86,10 @@ def runAgent(numEpisodes, agentClass, envClass, parameters, testParams={"maxStep
 
 def plotActions(agent, environment, resolution):
     stateRanges = environment.agentParams()["stateFormat"]
+    # if not continuous min is 0
+    if type(stateRanges[0]) == int:
+        stateRanges = [(0, s) for s in stateRanges]
+
     numStates = len(stateRanges)
     numActions = environment.agentParams()["numActions"]
 
@@ -147,6 +155,7 @@ def plotActions(agent, environment, resolution):
 
 def plotData(data, labels):
     # plot steps
+    plt.figure(figsize=(16,16))
     for i in range(len(data)):
         label = labels[i]
         plt.plot(data[i][0], label=label)
@@ -155,6 +164,9 @@ def plotData(data, labels):
     plt.title("steps")
     plt.legend(loc='upper right', prop={'size': 15})
     plt.show()
+    #plt.savefig("step_plot.pdf")
+
+    plt.figure(figsize=(16,16))
 
     # plot returns
     for i in range(len(data)):
@@ -165,7 +177,7 @@ def plotData(data, labels):
     plt.title("return")
     plt.legend(loc='upper right', prop={'size': 15})
     plt.show()
-    return
+    #plt.savefig("return_plot.pdf")
 
 def parameterSweep(numRuns, numEpisodes, agent, env, params, testParams):
     # only parameters at a time
@@ -186,7 +198,7 @@ def parameterSweep(numRuns, numEpisodes, agent, env, params, testParams):
         sweepParams = params.copy()
         sweepParams[sweepParam] = pVal
         print("running sweep", pVal, len(labels), "/", len(sweepVals))
-        data.append(runTest(numRuns, numEpisodes, agent, env, sweepParams, testParams, report=False))
+        data.append(runTest(numRuns, numEpisodes, agent, env, sweepParams, testParams, report=True))
 
     # plot
     plotData(data, labels)
@@ -227,22 +239,37 @@ def basicTest():
     #parameters = [{"alpha": 0.05, "gamma":1, "epsilon": 0.01, "tilings":24, "numTiles":16}, {"alpha": 0.05, "gamma":1, "epsilon": 0.05, "tilings":24, "numTiles":16}, {"alpha": 0.05, "gamma":1, "epsilon": 0.1, "tilings":24, "numTiles":16}]
     #agents = [a.EpisodicSemiGradSARSA]
     #parameters = [{"alpha": 0.05, "gamma":1, "epsilon": 0.1, "tilings":24, "numTiles":8}]
-    #testParams = {"algType": EPISODIC, "maxSteps":MAX_STEPS}
+    #testParams = {"algType": EPISODIC, "maxSteps":MAX_STEPS, "sparseReward": True}
 
     #numRuns = 2
-    #numEpisodes = 1000#1000
+    #numEpisodes = 200#1000
     #agents = [a.EpisodicActorCritic]
     #env = e.MountainCarEnvironmentCA
+    #env = e.GymMountainCarEnvironmentCA
     #parameters = [{"alphaW": 0.01, "alphaTheta": 0.001, "gamma":1, "tilings":8, "numTiles":8, "tau":0.01, "softplus":True, "softplusBeta":1}]
     #parameters = [{"alphaW": 0.01, "alphaTheta": 0.001, "gamma":1, "tilings":8, "numTiles":8, "tau":0, "softplus":True, "softplusBeta":1}]
     #testParams = {"algType": EPISODIC, "maxSteps":2500}
 
     numRuns = 2
-    numEpisodes = 200#1000
+    numEpisodes = 500#1000
     agents = [a.DQN]
-    env = e.MountainCarEnvironment
-    parameters = [{"alpha": 2**-11, "gamma":0.999, "epsilon": 0.1, "targetUpdate": 1, "batchSize": 32, "bufferCap":4000}]
-    testParams = {"algType": EPISODIC, "maxSteps":2000}
+    #env = e.MountainCarEnvironment
+    env = e.GymMountainCarEnvironment
+    parameters = [{"alpha": 0.001, "gamma":0.99, "epsilon": 0.1, "targetUpdate": 1, "batchSize": 32, "bufferCap":4096}] # mountain car - copy from shivams works
+    #parameters = [{"alpha": 2**-11, "gamma":0.99, "epsilon": 0.1, "targetUpdate": 1, "batchSize": 32, "bufferCap":100000}] # mountain car - the larger buffer helps a lot
+    #testParams = {"algType": EPISODIC, "maxSteps":1000}
+    #env = e.CartAndPoleEnvironment
+    #parameters = [{"alpha": 0.001, "gamma":0.99, "epsilon": 0.1, "targetUpdate": 1, "batchSize": 32, "bufferCap":4096}] # cart and pole - works
+    testParams = {"algType": EPISODIC, "maxSteps":400, "sparseReward":False}
+
+    #numRuns = 2
+    #numEpisodes = 100
+    #agents = [a.DQNTabular]
+    #parameters = [{"alpha": 0.001, "gamma":0.9, "epsilon": 0.05, "targetUpdate": 1, "batchSize": 128, "bufferCap":10000}]
+    #agents = [a.TabularSARSA, a.DQNTabular]
+    #parameters = [{"gamma": 1, "alpha": 0.1, "epsilon": 0.1},{"alpha": 0.001, "gamma":0.9, "epsilon": 0.05, "targetUpdate": 1, "batchSize": 128, "bufferCap":10000}]
+    #env = e.CliffWalk
+    #testParams = {"algType": EPISODIC, "maxSteps":200}
 
     data = []
     labels = []
@@ -258,20 +285,17 @@ def basicTest():
     plotData(data, labels)
 
 def sweepTest():
-    numRuns = 200
-    numEpisodes = 75
-    agent = a.DifferentialSemiGradientSARSA
-    env = e.AccessControlQueuing
-    #parameters = {"alpha": 0.01, "beta":0.01, "epsilon": 0.1, "tilings":2, "numTiles":21, "resetR":[True,False]} # True
-    #parameters = {"alpha": 0.01, "beta":[0.2,0.1,0.05,0.025,0.01,0.005,0.001], "epsilon": 0.1, "tilings":2, "numTiles":21, "resetR":True} # 0.01 seems good - no clear leader
-    #parameters = {"alpha": [0.2,0.1,0.05,0.01,0.005,0.001], "beta":0.01, "epsilon": 0.1, "tilings":2, "numTiles":21, "resetR":True} # 0.001 seems best
-    #parameters = {"alpha": [0.1,0.01,0.005,0.001,0.0005,0.0001,0.00001], "beta":0.001, "epsilon": 0.1, "tilings":2, "numTiles":21, "resetR":True} # 0.001 - hard to tell
-    parameters = {"alpha": 0.001, "beta":0.001, "epsilon": [0.1,0.05,0.01,0.005,0.001,0.0005,0.0001], "tilings":2, "numTiles":21, "resetR":True} # 0.005
-    testParams = {"algType": CONTINUOUS, "maxSteps":100}
+    numRuns = 5
+    numEpisodes = 400#1000
+    agent = a.DQN
+    env = e.MountainCarEnvironment
+    parameters = {"alpha": [2**-11, 2**-10, 2**-9, 2**-8], "gamma":0.999, "epsilon": 0.1, "targetUpdate": 1, "batchSize": 32, "bufferCap":100000}
+    testParams = {"algType": EPISODIC, "maxSteps":1000}
 
     parameterSweep(numRuns, numEpisodes, agent, env, parameters, testParams)
 
 def main():
+    torch.set_num_threads(torch.get_num_threads()*2-2)
     basicTest()
     #sweepTest()
     return
