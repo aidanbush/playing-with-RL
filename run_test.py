@@ -179,43 +179,74 @@ def plotData(data, labels):
     plt.show()
     #plt.savefig("return_plot.pdf")
 
-def parameterSweep(numRuns, numEpisodes, agent, env, params, testParams):
-    # only parameters at a time
-    sweepParam = None
-    for key in params.keys():
-        if isinstance(params[key], list):
-            if sweepParam != None:
-                print("only test one param at a time")
-                return
-            sweepParam = key
+def parameterSweep(numRuns, numEpisodes, agent, env, agentParams, testParams, numTests, grid=True):
+    if grid:
+        # GRID sweep
+        # create dictionary of ranges
+        sweepRanges = {}
+        for key in agentParams.keys():
+            if isinstance(agentParams[key], list):
+                sweepRanges[key] = agentParams[key]
 
-    sweepVals = params[sweepParam]
-    data = []
-    labels = []
-    
-    for pVal in sweepVals:
-        labels.append(agent.__name__ + " " + sweepParam + " " + str(pVal))
-        sweepParams = params.copy()
-        sweepParams[sweepParam] = pVal
-        print("running sweep", pVal, len(labels), "/", len(sweepVals))
-        data.append(runTest(numRuns, numEpisodes, agent, env, sweepParams, testParams, report=True))
+        print(sweepRanges)
+        data = []
+        labels = []
+
+        # for each num numTests^testParams
+        keys = list(sweepRanges.keys())
+        for i in range(numTests**len(keys)):
+            # create parameters for test i
+            agentSweepParams = agentParams.copy()
+            for j in range(len(keys)):
+                key = keys[j]
+                val = i // numTests**j % numTests / (numTests - 1)
+                val = val * (sweepRanges[key][1] - sweepRanges[key][0]) + sweepRanges[key][0]
+                agentSweepParams[key] = val
+
+            # run test
+            labels.append(agent.__name__ + " " + str(agentSweepParams))
+
+            print("Sweep:", len(labels), "/", numTests**len(keys), labels[-1])
+            data.append(runTest(numRuns, numEpisodes, agent, env, agentSweepParams, testParams, report=True))
+
+    else:
+        # random sweep
+        # create a dictionary of sweep ranges
+        sweepRanges = {}
+        for key in agentParams.keys():
+            if isinstance(agentParams[key], list):
+                sweepRanges[key] = agentParams[key]
+
+        data = []
+        labels = []
+
+        # for numTests run random parameter sweeps
+        for _ in range(numTests):
+            # create parameters for the test
+            agentSweepParams = agentParams.copy()
+            for key in sweepRanges:
+                agentSweepParams[key] = np.random.random() * (sweepRanges[key][1] - sweepRanges[key][0]) + sweepRanges[key][0]
+
+            # run test
+            labels.append(agent.__name__ + " " + str(agentSweepParams))
+
+            print("Sweep:", len(labels), "/", numTests, labels[-1])
+            data.append(runTest(numRuns, numEpisodes, agent, env, agentSweepParams, testParams, report=True))
 
     # plot
     plotData(data, labels)
 
-    # params plots
-
 def basicTest():
-    # numRuns = 30
-    # numEpisodes = 250
-    # agent = a.TabularSARSA
-    # agent = a.ExpectedSARSA
-    # agents = [a.TabularSARSA, a.QLearning, a.ExpectedSARSA]
-    # parameters = {"gamma": 1, "alpha": 0.1, "epsilon": 0.1}
-    # agents = [a.TabularSARSA, a.NStepSARSA]
-    # env = e.CliffWalk
-    # parameters = {"gamma": 1, "alpha": 0.1, "epsilon": 0.1, "n_steps": 5}
-    # testParams = {"algType": EPISODIC, "maxSteps":MAX_STEPS}
+    numRuns = 5
+    numEpisodes = 250
+    #agent = a.TabularSARSA
+    #agent = a.ExpectedSARSA
+    agents = [a.TabularSARSA, a.QLearning, a.ExpectedSARSA]
+    parameters = {"gamma": 1, "alpha": 0.1, "epsilon": 0.1}
+    #agents = [a.TabularSARSA, a.NStepSARSA]
+    env = e.CliffWalk
+    #parameters = {"gamma": 1, "alpha": 0.1, "epsilon": 0.1, "n_steps": 5}
+    testParams = {"algType": EPISODIC, "maxSteps":200}
 
     #numRuns = 5
     #numEpisodes = 100
@@ -244,31 +275,32 @@ def basicTest():
     #numRuns = 2
     #numEpisodes = 200#1000
     #agents = [a.EpisodicActorCritic]
-    #env = e.MountainCarEnvironmentCA
+    ##env = e.MountainCarEnvironmentCA
     #env = e.GymMountainCarEnvironmentCA
     #parameters = [{"alphaW": 0.01, "alphaTheta": 0.001, "gamma":1, "tilings":8, "numTiles":8, "tau":0.01, "softplus":True, "softplusBeta":1}]
-    #parameters = [{"alphaW": 0.01, "alphaTheta": 0.001, "gamma":1, "tilings":8, "numTiles":8, "tau":0, "softplus":True, "softplusBeta":1}]
+    ##parameters = [{"alphaW": 0.01, "alphaTheta": 0.001, "gamma":1, "tilings":8, "numTiles":8, "tau":0, "softplus":True, "softplusBeta":1}]
     #testParams = {"algType": EPISODIC, "maxSteps":2500}
 
-    numRuns = 2
-    numEpisodes = 500#1000
-    agents = [a.DQN]
+    #numRuns = 2
+    #numEpisodes = 500#1000
+    #agents = [a.DQN]
     #env = e.MountainCarEnvironment
-    env = e.GymMountainCarEnvironment
-    parameters = [{"alpha": 0.001, "gamma":0.99, "epsilon": 0.1, "targetUpdate": 1, "batchSize": 32, "bufferCap":4096}] # mountain car - copy from shivams works
+    #env = e.GymMountainCarEnvironment
+    #parameters = [{"alpha": 0.001, "gamma":0.99, "epsilon": 0.1, "targetUpdate": 1, "batchSize": 32, "bufferCap":4096}] # mountain car - copy from shivams works
     #parameters = [{"alpha": 2**-11, "gamma":0.99, "epsilon": 0.1, "targetUpdate": 1, "batchSize": 32, "bufferCap":100000}] # mountain car - the larger buffer helps a lot
     #testParams = {"algType": EPISODIC, "maxSteps":1000}
     #env = e.CartAndPoleEnvironment
     #parameters = [{"alpha": 0.001, "gamma":0.99, "epsilon": 0.1, "targetUpdate": 1, "batchSize": 32, "bufferCap":4096}] # cart and pole - works
-    testParams = {"algType": EPISODIC, "maxSteps":400, "sparseReward":False}
+    #testParams = {"algType": EPISODIC, "maxSteps":400, "sparseReward":False}
 
     #numRuns = 2
     #numEpisodes = 100
     #agents = [a.DQNTabular]
-    #parameters = [{"alpha": 0.001, "gamma":0.9, "epsilon": 0.05, "targetUpdate": 1, "batchSize": 128, "bufferCap":10000}]
-    #agents = [a.TabularSARSA, a.DQNTabular]
-    #parameters = [{"gamma": 1, "alpha": 0.1, "epsilon": 0.1},{"alpha": 0.001, "gamma":0.9, "epsilon": 0.05, "targetUpdate": 1, "batchSize": 128, "bufferCap":10000}]
+    #parameters = [{"alpha": 0.01, "gamma":1, "epsilon": 0.1, "targetUpdate": 1, "batchSize": 32, "bufferCap":4096}]
+    ##agents = [a.TabularSARSA, a.DQNTabular]
+    ##parameters = [{"gamma": 1, "alpha": 0.1, "epsilon": 0.1},{"alpha": 0.001, "gamma":0.9, "epsilon": 0.05, "targetUpdate": 1, "batchSize": 128, "bufferCap":10000}]
     #env = e.CliffWalk
+    ##env = e.RandomWalk
     #testParams = {"algType": EPISODIC, "maxSteps":200}
 
     data = []
@@ -286,13 +318,14 @@ def basicTest():
 
 def sweepTest():
     numRuns = 5
-    numEpisodes = 400#1000
+    numEpisodes = 400
     agent = a.DQN
     env = e.MountainCarEnvironment
-    parameters = {"alpha": [2**-11, 2**-10, 2**-9, 2**-8], "gamma":0.999, "epsilon": 0.1, "targetUpdate": 1, "batchSize": 32, "bufferCap":100000}
+    # test parameters [low,high]
+    parameters = {"alpha": [0.01, 0.1], "gamma":[0.99,0.999], "epsilon": 0.1, "targetUpdate": 1, "batchSize": 32, "bufferCap":100000}
     testParams = {"algType": EPISODIC, "maxSteps":1000}
 
-    parameterSweep(numRuns, numEpisodes, agent, env, parameters, testParams)
+    parameterSweep(numRuns, numEpisodes, agent, env, parameters, testParams, 3, grid=False)
 
 def main():
     torch.set_num_threads(torch.get_num_threads()*2-2)
